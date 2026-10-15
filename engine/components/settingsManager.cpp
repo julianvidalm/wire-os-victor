@@ -605,25 +605,9 @@ namespace Anki
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     bool SettingsManager::ApplySettingButtonWakeWord()
     {
-      static const std::string &key = RobotSetting_Name(external_interface::RobotSetting::button_wakeword);
-      const auto value = static_cast<external_interface::ButtonWakeWord>(_currentSettings[key].asUInt());
-      bool isAlexa = false;
-      switch (value)
-      {
-      default:
-      case external_interface::BUTTON_WAKEWORD_HEY_VECTOR:
-      {
-        isAlexa = false;
-      }
-      break;
-      case external_interface::BUTTON_WAKEWORD_ALEXA:
-      {
-        isAlexa = true;
-      }
-      break;
-      }
-
-      _robot->SendRobotMessage<RobotInterface::SetButtonWakeWord>(isAlexa);
+      // Alexa is gone: BUTTON_WAKEWORD_ALEXA stays a valid stored value (app, SDK and old jdocs may hold it)
+      // but the button always behaves like "Hey Vector".
+      _robot->SendRobotMessage<RobotInterface::SetButtonWakeWord>(false);
       return true;
     }
 

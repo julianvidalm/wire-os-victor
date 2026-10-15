@@ -91,7 +91,8 @@ void SpeechRecognizerSystem::InitVector(TriggerWordDetectedCallback callback)
   }
 
   _victorTrigger = std::make_unique<SpeechRecognizerPicovoice>();
-  _victorTrigger->Init(true, true);
+  // "Hey Vector" only: the Alexa keyword is no longer loaded into the shared Porcupine instance
+  _victorTrigger->Init(true, false);
   _victorTrigger->SetCallback([callback=std::move(callback), this](const AudioUtil::SpeechRecognizerCallbackInfo& info)
   {
     if (info.result != SpeechRecognizerPicovoice::kAlexaKeyword) {
