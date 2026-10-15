@@ -6,8 +6,6 @@
 
   "behaviors": [
     "SingletonPoweringRobotOff",
-    "AlexaSignInOut",
-    "Alexa",
     "EmergencyMode",
     "SDKOverrideAll",
     "ShutUpMode",

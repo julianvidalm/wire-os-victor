@@ -21,9 +21,6 @@ enum uint_8 BehaviorClass {
   StayOnChargerUntilCharged,
   Wait,
 
-  // alexa
-  Alexa,
-  AlexaSignInOut,
 
   // animationWrappers
   AnimGetInLoop,

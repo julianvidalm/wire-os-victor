@@ -66,9 +66,6 @@ enum uint_16 BehaviorID {
   SnakeGame,
   TestStackMonitors,
 
-  // victorBehaviorTree/alexa
-  Alexa,
-  AlexaSignInOut,
 
   // victorBehaviorTree/appBehaviors
   ChangeEyeColor,

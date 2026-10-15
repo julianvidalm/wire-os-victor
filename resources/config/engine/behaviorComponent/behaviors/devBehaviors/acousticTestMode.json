@@ -14,7 +14,7 @@
   ],
 
   "anonymousBehaviors": [
-    // a queue that moves the head up then does alexa behaviors and nothing else
+    // a queue that moves the head up and then waits, for wake word testing on the charger
     {
       "behaviorName" : "OnChargerInternal",
       "behaviorClass" : "DispatcherQueue",
@@ -32,7 +32,7 @@
       "behaviors": [
         "WiggleBackOntoChargerFromPlatform",
         "MoveHeadUpInternal",
-        "AlexaInternal"
+        "Wait"
       ],
       
       "anonymousBehaviors": [
@@ -40,18 +40,6 @@
           "behaviorName": "MoveHeadUpInternal",
           "behaviorClass": "MoveHeadToAngle",
           "headAngle_deg": 45.0
-        },
-        {
-          "behaviorName" : "AlexaInternal",
-          "behaviorClass" : "DispatcherStrictPriority",
-          
-          "interruptActiveBehavior": true,
-          
-          "behaviors": [
-            "AlexaSignInOut",
-            "Alexa",
-            "Wait"
-          ]
         }
       ]
     }

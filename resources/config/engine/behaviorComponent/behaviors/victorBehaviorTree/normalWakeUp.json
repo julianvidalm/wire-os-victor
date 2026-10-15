@@ -20,10 +20,5 @@
     }
   },
 
-  // if an alexa interaction is pending, skip the wakeup
-  "wantsToCancelSelfCondition": {
-    "conditionType": "AlexaInteractionActive"
-  },
-
   "animTriggers": ["InitialWakeUp"]
 }

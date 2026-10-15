@@ -15,8 +15,6 @@
 #include "engine/aiComponent/behaviorComponent/behaviors/behaviorSimpleVoiceResponse.h"
 #include "engine/aiComponent/behaviorComponent/behaviors/behaviorStayOnChargerUntilCharged.h"
 #include "engine/aiComponent/behaviorComponent/behaviors/behaviorWait.h"
-#include "engine/aiComponent/behaviorComponent/behaviors/alexa/behaviorAlexa.h"
-#include "engine/aiComponent/behaviorComponent/behaviors/alexa/behaviorAlexaSignInOut.h"
 #include "engine/aiComponent/behaviorComponent/behaviors/animationWrappers/behaviorAnimGetInLoop.h"
 #include "engine/aiComponent/behaviorComponent/behaviors/animationWrappers/behaviorAnimSequence.h"
 #include "engine/aiComponent/behaviorComponent/behaviors/animationWrappers/behaviorAnimSequenceWithFace.h"
@@ -234,18 +232,6 @@ ICozmoBehaviorPtr BehaviorFactory::CreateBehavior(const Json::Value& config)
     case BehaviorClass::Wait:
     {
       newBehavior = ICozmoBehaviorPtr(new BehaviorWait(config));
-      break;
-    }
-    
-    case BehaviorClass::Alexa:
-    {
-      newBehavior = ICozmoBehaviorPtr(new BehaviorAlexa(config));
-      break;
-    }
-    
-    case BehaviorClass::AlexaSignInOut:
-    {
-      newBehavior = ICozmoBehaviorPtr(new BehaviorAlexaSignInOut(config));
       break;
     }
     
