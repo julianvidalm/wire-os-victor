@@ -64,7 +64,6 @@ target_link_libraries(victor_anim
   ${PLATFORM_LIBS}
   # Aubio beat detection
   ${AUBIO_LIBS}
-  ${AVS_LIBS}
   ${PFFFT_LIBS}
   ${MPG123_LIBS}
   PUBLIC

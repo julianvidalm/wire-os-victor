@@ -170,7 +170,6 @@ include(audio) # See ./cmake/audio.cmake for definitions and lib
 include(wwise) # for Wwise targets
 include(protobuf) # for protobuf target
 include(breakpad) # for breakpad targets
-include(avs-device-sdk)
 
 include(speexdsp)
 include(pffft)
