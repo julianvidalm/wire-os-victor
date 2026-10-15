@@ -65,11 +65,6 @@ public:
   
   // Set backpack lights to indicate whether the microphone / wake word is muted
   void SetMicMute(bool muted) { _micMuted = muted; }
-  
-  void SetAlexaNotification(bool hasNotification) { _hasNotification = hasNotification; }
-  
-  // Set backpack lights to indicate whether alexa is streaming
-  void SetAlexaStreaming(bool streaming) { _alexaStreaming = streaming; }
 
   void SetSelfTestRunning(bool running) { _selfTestRunning = running; }
 
@@ -101,7 +96,7 @@ private:
   BackpackLightDataRefWeak GetBestLightConfig();
 
   // Updates the critical backpack light config if neccessary
-  void UpdateCriticalBackpackLightConfig(bool isCloudStreamOpen, bool isMicMuted, bool isNotificationPending);
+  void UpdateCriticalBackpackLightConfig(bool isCloudStreamOpen, bool isMicMuted);
 
   // Updates the current system light pattern if neccessary
   void UpdateSystemLightState(bool isCloudStreamOpen);
@@ -162,9 +157,7 @@ private:
   // State for streaming lights
   bool _willStreamOpen = false;
   bool _isStreaming = false;
-  bool _alexaStreaming = false; // separate state in case we decide to change lights
   bool _micMuted = false;
-  bool _hasNotification = false;
 
   bool _selfTestRunning = false;
 

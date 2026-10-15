@@ -2102,7 +2102,7 @@ namespace Anim {
 
     if (_onCharger && _frozenOnCharger)
     {
-      // When on charger, don't move or play audio! (This could be alexa acoustic test mode)
+      // When on charger, don't move or play audio! (acoustic test mode)
       // Don't lock tracks so as to not disturb any other functionality, simply drop the messages
       // on the floor.
       Anki::Util::SafeDelete(messageWrapper.bodyMotionMessage);

@@ -38,7 +38,6 @@ class AudioMultiplexer;
 
 namespace Vector {
 
-class Alexa;
 namespace Anim {
   class BackpackLightComponent;
 }
@@ -94,7 +93,6 @@ public:
   ShowAudioStreamStateManager*          GetShowAudioStreamStateManager() const { return _showStreamStateManager.get(); }
   WebService::WebService*               GetWebService() const { return _webService.get(); }
   Audio::AudioPlaybackSystem*           GetAudioPlaybackSystem() const { return _audioPlayer.get(); }
-  Alexa*                                GetAlexa() const { return _alexa.get(); }
   BackpackLightComponent*               GetBackpackLightComponent() const { return _backpackLightComponent.get(); }
   PerfMetricAnim*                       GetPerfMetric() const { return _perfMetric.get(); }
 
@@ -108,15 +106,10 @@ private:
   Util::Data::DataPlatform*                      _dataPlatform = nullptr;
 
   // Context holds onto these things for everybody.
-  //
-  // Note that MicDataSystem calls into Alexa component, so MicDataSystem
-  // must be shut down BEFORE Alexa component is destroyed!
-  //
   std::unique_ptr<Util::Locale>                  _locale;
   std::unique_ptr<AudioMultiplexer>              _audioMux;
   std::unique_ptr<Util::RandomGenerator>         _random;
   std::unique_ptr<Anim::RobotDataLoader>         _dataLoader;
-  std::unique_ptr<Alexa>                         _alexa;
   std::unique_ptr<MicData::MicDataSystem>        _micDataSystem;
   std::unique_ptr<ShowAudioStreamStateManager>   _showStreamStateManager;
   std::unique_ptr<WebService::WebService>        _webService;

@@ -2,7 +2,6 @@
 #include "cozmoAnim/animContext.h"
 
 #include "audioEngine/multiplexer/audioMultiplexer.h"
-#include "cozmoAnim/alexa/alexa.h"
 #include "cozmoAnim/audio/audioPlaybackSystem.h"
 #include "cozmoAnim/audio/cozmoAudioController.h"
 #include "cozmoAnim/backpackLights/animBackpackLightComponent.h"
@@ -38,7 +37,6 @@ AnimContext::AnimContext(Util::Data::DataPlatform* dataPlatform)
   , _locale(new Anki::Util::Locale(Anki::Util::Locale::GetNativeLocale()))
   , _random(new Anki::Util::RandomGenerator())
   , _dataLoader(new RobotDataLoader(this))
-  , _alexa(new Alexa())
   , _micDataSystem(new MicData::MicDataSystem(dataPlatform, this))
   , _showStreamStateManager(new ShowAudioStreamStateManager(this))
   , _webService(new WebService::WebService())
@@ -97,9 +95,6 @@ void AnimContext::SetLocale(const std::string & locale)
 
   if (_micDataSystem != nullptr) {
     _micDataSystem->UpdateLocale(*_locale);
-  }
-  if (_alexa != nullptr) {
-    _alexa->UpdateLocale(*_locale);
   }
 }
 } // namespace Anim

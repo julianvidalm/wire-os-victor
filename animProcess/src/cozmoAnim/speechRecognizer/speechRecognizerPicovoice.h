@@ -20,17 +20,12 @@ public:
   SpeechRecognizerPicovoice& operator=(const SpeechRecognizerPicovoice& other) = delete;
 
   static constexpr const char* kHeyVectorKeyword = "HEY_VECTOR";
-  static constexpr const char* kAlexaKeyword = "ALEXA";
 
-  bool Init(bool useHeyVector, bool useAlexa);
+  bool Init();
 
   virtual void Update(const AudioUtil::AudioSample* audioData, unsigned int audioDataLen) override;
 
   void Reset();
-
-  bool HasKeyword(const std::string& keyword) const;
-
-  uint64_t GetSampleCount() const;
 
 private:
   struct SpeechRecognizerPicovoiceData;

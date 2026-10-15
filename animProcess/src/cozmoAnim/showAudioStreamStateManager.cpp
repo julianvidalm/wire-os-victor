@@ -13,12 +13,10 @@
 #include "cozmoAnim/showAudioStreamStateManager.h"
 
 #include "micDataTypes.h"
-#include "clad/types/alexaTypes.h"
 #include "cozmoAnim/animation/animationStreamer.h"
 #include "cozmoAnim/audio/engineRobotAudioInput.h"
 #include "cozmoAnim/audio/cozmoAudioController.h"
 #include "cozmoAnim/robotDataLoader.h"
-#include "util/string/stringUtils.h"
 
 #include "audioEngine/audioTypeTranslator.h"
 
@@ -188,40 +186,6 @@ bool ShowAudioStreamStateManager::ShouldSimulateStreamAfterTriggerWord()
   return HasValidTriggerResponse() && _shouldTriggerWordSimulateStream;
 }
 
-void ShowAudioStreamStateManager::SetAlexaUXResponses(const RobotInterface::SetAlexaUXResponses& msg)
-{
-  std::lock_guard<std::recursive_mutex> lock(_triggerResponseMutex); // HasAnyAlexaResponse may be called off thread
-
-  _alexaResponses.clear();
-  const std::string csvResponses{msg.csvGetInAnimNames, msg.csvGetInAnimNames_length};
-  const std::vector<std::string> animNames = Util::StringSplit(csvResponses, ',');
-  int maxAnims = 4;
-  if( !ANKI_VERIFY(animNames.size() == 4,
-                   "ShowAudioStreamStateManager.SetAlexaUXResponses.UnexpectedCnt",
-                   "Expecting 4 anim names, received %zu",
-                   animNames.size()) )
-  {
-    maxAnims = std::min((int)animNames.size(), 4);
-  }
-  static_assert( sizeof(msg.postAudioEvents) / sizeof(msg.postAudioEvents[0]) == 4, "Expected 4 elems" );
-  static_assert( sizeof(msg.getInAnimTags) / sizeof(msg.getInAnimTags[0]) == 4, "Expected 4 elems" );
-  for( int i=0; i<maxAnims; ++i ) {
-    AlexaInfo info;
-    info.state = static_cast<AlexaUXState>(i);
-    info.audioEvent = msg.postAudioEvents[i];
-    info.getInAnimTag = msg.getInAnimTags[i];
-    info.getInAnimName = animNames[i];
-
-    PRINT_CH_INFO( "Alexa", "Alexa.SetAlexaUXResponses.response",
-                   "%d: %s (tag %d)",
-                   i,
-                   info.getInAnimName.c_str(),
-                   info.getInAnimTag);
-
-    _alexaResponses.push_back( std::move(info) );
-  }
-}
-
 uint32_t ShowAudioStreamStateManager::GetMinStreamingDuration()
 {
   if( _minStreamingDuration_ms > kUseDefaultStreamingDuration ){
@@ -230,79 +194,6 @@ uint32_t ShowAudioStreamStateManager::GetMinStreamingDuration()
   else{
     return MicData::kStreamingDefaultMinDuration_ms;
   }
-}
-
-bool ShowAudioStreamStateManager::HasAnyAlexaResponse() const
-{
-  std::lock_guard<std::recursive_mutex> lock(_triggerResponseMutex);
-
-  for( const auto& info : _alexaResponses ) {
-    if( info.getInAnimTag != 0 ) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool ShowAudioStreamStateManager::HasValidAlexaUXResponse(AlexaUXState state) const
-{
-  for( const auto& info : _alexaResponses ) {
-    if( info.state == state ) {
-      // unlike wake word responses, which are valid if there is an audio event, Alexa UX responses are valid if a
-      // nonzero anim tag was provided.
-      return (info.getInAnimTag != 0);
-    }
-  }
-  return false;
-}
-
-bool ShowAudioStreamStateManager::StartAlexaResponse(AlexaUXState state, bool ignoreGetIn)
-{
-  const AlexaInfo* response = nullptr;
-  for( const auto& info : _alexaResponses ) {
-    // unlike wake word responses, which are valid if there is an audio event, Alexa UX responses are valid if a
-    // nonzero anim tag was provided.
-    if( (info.state == state) && (info.getInAnimTag != 0) ) {
-      response = &info;
-    }
-  }
-
-  if( response == nullptr ) {
-    return false;
-  }
-
-  if( !response->getInAnimName.empty() && !ignoreGetIn ) {
-    // TODO: (VIC-11516) it's possible that the UX state went back to idle for just a short while, in
-    // which case the engine could be playing the get-out from the previous UX state, or worse, is
-    // still in the looping animation for that ux state. it would be nice if the get-in below only
-    // plays if the eyes are showing.
-
-    auto* anim = _context->GetDataLoader()->GetCannedAnimation( response->getInAnimName );
-    if( ANKI_VERIFY( (_streamer != nullptr) && (anim != nullptr),
-                     "ShowAudioStreamStateManager.StartAlexaResponse.NoValidGetInAnim",
-                     "Animation not found for get in %s", response->getInAnimName.c_str() ) )
-    {
-      const bool interruptRunning = true;
-      _streamer->SetStreamingAnimation( response->getInAnimName, response->getInAnimTag, 1, 0, interruptRunning);
-    }
-  }
-
-  // Only play earcons when not frozen on charger (alexa acoustic test mode)
-  if( !(_onCharger && _frozenOnCharger) ) {
-    Audio::CozmoAudioController* controller = _context->GetAudioController();
-    if( ANKI_VERIFY(nullptr != controller, "ShowAudioStreamStateManager.StartAlexaResponse.NullAudioController",
-                    "The CozmoAudioController is null so the audio event cannot be played" ) )
-    {
-      using namespace AudioEngine;
-      const auto audioEvent = response->audioEvent.audioEvent;
-      if ( audioEvent != AudioMetaData::GameEvent::GenericEvent::Invalid ) {
-        controller->PostAudioEvent( ToAudioEventId( audioEvent ),
-                                    ToAudioGameObject( response->audioEvent.gameObject ) );
-      }
-    }
-  }
-
-  return true;
 }
 
 } // namespace Vector
