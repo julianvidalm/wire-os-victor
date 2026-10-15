@@ -445,10 +445,6 @@ void Process_setTriggerWordResponse(const Anki::Vector::RobotInterface::SetTrigg
   showStreamStateManager->SetTriggerWordResponse(msg);
 }
 
-// Alexa is not supported; its engine messages remain in the protocol and are ignored
-void Process_setAlexaUXResponses(const Anki::Vector::RobotInterface::SetAlexaUXResponses&) {}
-void Process_setAlexaUsage(const Anki::Vector::RobotInterface::SetAlexaUsage&) {}
-
 // The backpack button always triggers "Hey Vector"
 void Process_setButtonWakeWord(const Anki::Vector::RobotInterface::SetButtonWakeWord&) {}
 

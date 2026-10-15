@@ -68,18 +68,6 @@
     "enabled": false
   },
   {
-    "feature": "Alexa",
-    "enabled": false // Alexa is being removed from the firmware
-  },
-  {
-    "feature": "Alexa_UK",
-    "enabled": false
-  },
-  {
-    "feature": "Alexa_AU",
-    "enabled": false
-  },
-  {
     "feature": "HeldInPalm",
     "enabled": true
   },

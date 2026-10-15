@@ -15,7 +15,6 @@
     [
       { "channel": "Actions",                           "enabled": true  },
       { "channel": "AIWhiteboard",                      "enabled": true  },
-      { "channel": "Alexa",                             "enabled": true  },
       { "channel": "Audio",                             "enabled": true  },
       { "channel": "Behaviors",                         "enabled": true  },
       { "channel": "BlockPool",                         "enabled": true  },
@@ -52,7 +51,6 @@
     [
       { "channel": "Actions",                           "enabled": false },
       { "channel": "AIWhiteboard",                      "enabled": false },
-      { "channel": "Alexa",                             "enabled": false },
       { "channel": "Audio",                             "enabled": false },
       { "channel": "Behaviors",                         "enabled": false },
       { "channel": "BlockPool",                         "enabled": false },

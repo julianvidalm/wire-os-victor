@@ -221,10 +221,6 @@ CozmoFeatureGate::CozmoFeatureGate( Util::Data::DataPlatform* platform )
 bool CozmoFeatureGate::IsFeatureEnabled(FeatureType feature) const
 {
 
-  #if (ANKI_DISABLE_ALEXA)
-  if (feature == FeatureType::Alexa) { return false;}
-  #endif
-  
   #if FEATURE_OVERRIDES_ENABLED
   {
     const uint8_t featureIndex = static_cast<uint8_t>(feature);
