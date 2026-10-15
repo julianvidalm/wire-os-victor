@@ -20,6 +20,8 @@
 #include "util/container/fixedCircularBuffer.h"
 #include <cstdint>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 class AkAlsaSink;
 
@@ -56,18 +58,31 @@ public:
   uint32_t GetSampleRate() const;
   uint8_t  GetNumberOfChannels() const;
   
-  // NOTE: This callback happens on the Audio Thread, DO NOT BLOCK!!! Copy the data and get OUT!!
-  void SetPlaybackBufferCallback(const AkAlsaSinkPluginTypes::WriteBufferToAlsaCallbackFunc callback);
+  // Playback observers receive every buffer sent to the speaker, including silent ones (hasData == false).
+  // Observers run on the audio thread while the sink holds its buffer lock: copy the data and return.
+  // They must not add or remove observers. RemovePlaybackObserver returns only after any in-flight call to
+  // that observer has finished, so the observer's owner can be destroyed right after.
+  using PlaybackObserverId = uint32_t;
+  static constexpr PlaybackObserverId kInvalidPlaybackObserverId = 0;
 
-  
+  PlaybackObserverId AddPlaybackObserver(AkAlsaSinkPluginTypes::WriteBufferToAlsaCallbackFunc observer);
+  void RemovePlaybackObserver(PlaybackObserverId observerId);
+
+
 private:
 
 #if defined VICOS && not defined EXCLUDE_ANKI_AUDIO_LIBS
-  AkAlsaSink* _pluginInstance;
+  AkAlsaSink* _pluginInstance = nullptr;
 #endif
-  
+
   AudioEngine::AudioUInt32 _audioThreadAffinityMask;
-  AkAlsaSinkPluginTypes::WriteBufferToAlsaCallbackFunc _writeToAlsaCallback;
+
+  // Fans one sink frame out to every observer (audio thread)
+  void NotifyPlaybackObservers(const AkAlsaSinkPluginTypes::AudioChunk& chunk, bool hasData);
+
+  std::mutex _observersMutex;
+  std::vector<std::pair<PlaybackObserverId, AkAlsaSinkPluginTypes::WriteBufferToAlsaCallbackFunc>> _observers;
+  PlaybackObserverId _nextObserverId = kInvalidPlaybackObserverId + 1;
 
 };
 

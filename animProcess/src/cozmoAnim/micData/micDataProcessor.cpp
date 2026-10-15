@@ -25,6 +25,7 @@
 #include "cozmoAnim/micData/micDataSystem.h"
 #include "cozmoAnim/micData/micDataInfo.h"
 #include "cozmoAnim/micData/micImmediateDirection.h"
+#include "cozmoAnim/micData/micTap.h"
 #include "cozmoAnim/showAudioStreamStateManager.h"
 #include "cozmoAnim/speechRecognizer/speechRecognizerSystem.h"
 #include "audioUtil/speechRecognizer.h"
@@ -418,6 +419,11 @@ void MicDataProcessor::ProcessRawAudio(RobotTimeStamp_t timestamp,
     nextSample.audioBlock.data(),
     robotStatus,
     robotAngle);
+
+  // ProcessMicrophonesSE just refreshed both noise flags for this block
+  if (MicTap* micTap = _micDataSystem->GetMicTap()) {
+    micTap->OnMicBlock(timestamp, nextSample.audioBlock.data(), _isSpeakerActive, _robotWasMoving);
+  }
 
 #ifdef STANDALONE_SIM
   // assume in front of robot if sim

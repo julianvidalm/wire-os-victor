@@ -48,6 +48,7 @@ namespace Anki {
     namespace MicData {
       class MicDataInfo;
       class MicDataProcessor;
+      class MicTap;
     }
     namespace Anim {
       class RobotDataLoader;
@@ -83,6 +84,8 @@ public:
   void Init(const Anim::RobotDataLoader& dataLoader);
 
   MicData::MicDataProcessor* GetMicDataProcessor() const { return _micDataProcessor.get(); }
+  // Created in Init() before the mic processing threads start and destroyed after they stop
+  MicData::MicTap* GetMicTap() const { return _micTap.get(); }
   SpeechRecognizerSystem* GetSpeechRecognizerSystem() const { return _speechRecognizerSystem.get(); }
   
   void ProcessMicDataPayload(const RobotInterface::MicData& payload);
@@ -178,6 +181,7 @@ private:
   std::string _timeZone = "";
 
   std::unique_ptr<MicDataProcessor>       _micDataProcessor;
+  std::unique_ptr<MicTap>                 _micTap;
   std::unique_ptr<SpeechRecognizerSystem> _speechRecognizerSystem;
   std::unique_ptr<LocalUdpServer>         _udpServer;
 

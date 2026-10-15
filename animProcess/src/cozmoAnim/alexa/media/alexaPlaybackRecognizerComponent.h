@@ -17,6 +17,7 @@
 #define __AnimProcess_AlexaPlaybackRecognizerComponent_H__
 
 
+#include "audioEngine/plugins/akAlsaSinkPlugIn.h"
 #include "audioEngine/plugins/akAlsaSinkPluginTypes.h"
 #include "audioEngine/plugins/ankiPluginInterface.h"
 #include "util/container/fixedCircularBuffer.h"
@@ -96,6 +97,8 @@ private:
   SpeechRecognizerSystem&                   _speechRecSys;
   SpeexResamplerState*                      _resamplerState = nullptr;
   AudioEngine::PlugIns::AkAlsaSinkPlugIn*   _sinkPlugin = nullptr;
+  AudioEngine::PlugIns::AkAlsaSinkPlugIn::PlaybackObserverId _playbackObserverId =
+    AudioEngine::PlugIns::AkAlsaSinkPlugIn::kInvalidPlaybackObserverId;
 
   // State flags
   std::atomic_bool                _isActive{ false };
