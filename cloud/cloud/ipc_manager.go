@@ -1,13 +1,14 @@
 // ipc_manager.go handles messages between gateway and the following other processes:
 //   - vic-engine: There are both a CLAD (EngineCladIpcManager) and a Protobuf (EngineProtoIpcManager)
-//                 domain socket connecting gateway to the engine. The CLAD socket is currently in the
-//                 process of being deprecated because it was designed as a temporary connection while
-//                 messages were converted to Protobuf.
+//     domain socket connecting gateway to the engine. The CLAD socket is currently in the
+//     process of being deprecated because it was designed as a temporary connection while
+//     messages were converted to Protobuf.
 //   - vic-switchboard: There is a CLAD domain socket connecting gateway to switchboard. This socket is
-//                      used to coordinate authentication between the two processes.
+//     used to coordinate authentication between the two processes.
 //   - vic-cloud: There is a CLAD domain socket connecting gateway to vic-cloud. This socket is used to
-//                refresh the latest authentication tokens from vic-cloud. This socket is defined inside
-//                the tokens.go file because the properties of that socket are a special case.
+//     refresh the latest authentication tokens from vic-cloud. This socket is defined inside
+//     the tokens.go file because the properties of that socket are a special case.
+//
 // To add a new connection, add the domain socket name (as defined by the server) to the list of consts
 // below. And create a new IpcManager struct for that given socket. In main.go the connection should be
 // Init-ed. Then it will be ready to use.
@@ -16,6 +17,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -51,8 +53,9 @@ const (
 // field conn: The connection to the domain socket by which messages are passed between processes.
 //
 // Note: If there is a function that can be shared, use the engine manager.
-//       The only reason I duplicated the functions so far was interfaces
-//       were strangely causing the deleteListenerUnsafe to fail. - shawn 7/17/18
+//
+//	The only reason I duplicated the functions so far was interfaces
+//	were strangely causing the deleteListenerUnsafe to fail. - shawn 7/17/18
 type IpcManager struct {
 	connMutex sync.Mutex
 	conn      ipc.Conn
@@ -506,6 +509,25 @@ func (manager *EngineCladIpcManager) Write(msg *gw_clad.MessageExternalToRobot) 
 		log.Printf("%T: writing '%#v' CLAD message to Engine\n", *manager, *msg)
 	}
 	return manager.conn.Write(buf.Bytes())
+}
+
+// fakeTriggerWordDetectedTag is GameToEngine::FakeTriggerWordDetected, numbered by its position in the
+// engine's autounion (clad/src/clad/externalInterface/messageGameToEngine.clad); the firmware CI checks it
+// against the generated messageGameToEngineTag.h.
+const fakeTriggerWordDetectedTag = 126
+
+// SendFakeTriggerWord wakes the robot as if it had heard "Hey Vector", through the same non-dev path as a
+// backpack-button press: get-in animation, earcon, then the robot's normal voice request. The engine's gateway
+// socket accepts any MessageGameToEngine, but this message is not part of the Go gateway CLAD, so it is framed
+// here: u16 little-endian size, then the tag (the message has no fields).
+func (manager *EngineCladIpcManager) SendFakeTriggerWord() error {
+	manager.connMutex.Lock()
+	defer manager.connMutex.Unlock()
+	if manager.conn == nil {
+		return errors.New("not connected to the engine")
+	}
+	_, err := manager.conn.Write([]byte{0x01, 0x00, fakeTriggerWordDetectedTag})
+	return err
 }
 
 // deleteListenerUnsafe is "unsafe" in that it requires the calling function to have already acquired the
