@@ -1,9 +1,5 @@
 [
   {
-    "CladEvent": "AlexaNotification",
-    "AnimName": "alexaNotification"
-  },
-  {
       "CladEvent": "Charging",
       "AnimName": "charging"
   },

@@ -15,7 +15,6 @@
 #include "cozmoAnim/animComms.h"
 #include "cozmoAnim/robotDataLoader.h"
 
-#include "cozmoAnim/alexa/alexa.h"
 #include "cozmoAnim/animation/animationStreamer.h"
 #include "cozmoAnim/animation/streamingAnimationModifier.h"
 #include "cozmoAnim/audio/engineRobotAudioInput.h"
@@ -446,35 +445,14 @@ void Process_setTriggerWordResponse(const Anki::Vector::RobotInterface::SetTrigg
   showStreamStateManager->SetTriggerWordResponse(msg);
 }
 
-void Process_setAlexaUXResponses(const Anki::Vector::RobotInterface::SetAlexaUXResponses& msg)
-{
-  auto* showStreamStateManager = _context->GetShowAudioStreamStateManager();
-  if( showStreamStateManager != nullptr ) {
-    showStreamStateManager->SetAlexaUXResponses( msg );
-  }
-}
+// The backpack button always triggers "Hey Vector"
+void Process_setButtonWakeWord(const Anki::Vector::RobotInterface::SetButtonWakeWord&) {}
 
 void Process_resetBeatDetector(const Anki::Vector::RobotInterface::ResetBeatDetector& msg)
 {
   auto* micDataSystem = _context->GetMicDataSystem();
   if (micDataSystem != nullptr) {
     micDataSystem->ResetBeatDetector();
-  }
-}
-
-void Process_setAlexaUsage(const Anki::Vector::RobotInterface::SetAlexaUsage& msg)
-{
-  auto* alexa = _context->GetAlexa();
-  if (alexa != nullptr) {
-    alexa->SetAlexaUsage( msg.optedIn );
-  }
-}
-
-void Process_setButtonWakeWord(const Anki::Vector::RobotInterface::SetButtonWakeWord& msg)
-{
-  auto* micDataSystem = _context->GetMicDataSystem();
-  if (micDataSystem != nullptr) {
-    micDataSystem->SetButtonWakeWordIsAlexa( msg.isAlexa );
   }
 }
 
@@ -623,16 +601,7 @@ void Process_batteryStatus(const RobotInterface::BatteryStatus& msg)
 
 void Process_acousticTestEnabled(const Anki::Vector::RobotInterface::AcousticTestEnabled& msg)
 {
-  bool enabled = msg.enabled;
-  _animStreamer->SetFrozenOnCharger( enabled );
-  auto* alexa = _context->GetAlexa();
-  if( alexa != nullptr ) {
-    alexa->SetFrozenOnCharger( enabled );
-  }
-  auto* showStreamStateManager = _context->GetShowAudioStreamStateManager();
-  if( showStreamStateManager != nullptr ) {
-    showStreamStateManager->SetFrozenOnCharger( enabled );
-  }
+  _animStreamer->SetFrozenOnCharger( msg.enabled );
 }
 
 void Process_triggerBackpackAnimation(const RobotInterface::TriggerBackpackAnimation& msg)
@@ -645,11 +614,6 @@ void Process_engineFullyLoaded(const RobotInterface::EngineFullyLoaded& msg)
   _engineLoaded = true;
 
   FaceInfoScreenManager::getInstance()->OnEngineLoaded();
-
-  auto* alexa = _context->GetAlexa();
-  if( alexa != nullptr ) {
-    alexa->OnEngineLoaded();
-  }
 }
 
 void Process_selfTestEnd(const RobotInterface::SelfTestEnd& msg)
@@ -799,17 +763,6 @@ void AnimProcessMessages::ProcessMessageFromRobot(const RobotInterface::RobotToE
       HandleRobotStateUpdate(msg.state);
       const bool onChargerContacts = (msg.state.status & (uint32_t)RobotStatusFlag::IS_ON_CHARGER);
       _animStreamer->SetOnCharger(onChargerContacts);
-      auto* showStreamStateManager = _context->GetShowAudioStreamStateManager();
-      if (showStreamStateManager != nullptr)
-      {
-        showStreamStateManager->SetOnCharger( onChargerContacts );
-      }
-      auto* alexa = _context->GetAlexa();
-      if (alexa != nullptr)
-      {
-        alexa->SetOnCharger( onChargerContacts );
-      }
-
     }
     break;
     case RobotInterface::RobotToEngine::Tag_stillAlive:
@@ -963,7 +916,6 @@ Result AnimProcessMessages::Update(BaseStationTime_t currTime_nanosec)
   _context->GetMicDataSystem()->Update(currTime_nanosec);
   _context->GetAudioPlaybackSystem()->Update(currTime_nanosec);
   _context->GetShowAudioStreamStateManager()->Update();
-  _context->GetAlexa()->Update();
 
   // Process incoming messages from engine
   u32 dataLen;

@@ -102,18 +102,6 @@ void RobotDataLoader::LoadConfigData()
                   ws_config.c_str());
     }
   }
-  {
-    const std::string& alexaConfigFile = "config/alexa.json";
-    const auto path = _platform->GetResourcePath(alexaConfigFile);
-
-    if (Util::FileUtils::FileExists(path)) {
-      _alexaConfig = Util::FileUtils::ReadFile(path);
-    } else {
-      LOG_ERROR("RobotDataLoader.AlexaConfigNotFound",
-                "Alexa config file %s not found or failed to parse",
-                path.c_str());
-    }
-  }
 }
 
 void RobotDataLoader::LoadNonConfigData()

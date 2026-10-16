@@ -52,7 +52,6 @@ public:
   virtual void InitDependent(Vector::Robot* robot, const RobotCompMap& dependentComps) override;
 
   virtual void GetUpdateDependencies(RobotCompIDSet& dependencies) const override {
-    dependencies.insert(RobotComponentID::AIComponent);
   }
   virtual void AdditionalUpdateAccessibleComponents(RobotCompIDSet& comps) const override {
     comps.insert(RobotComponentID::Vision);

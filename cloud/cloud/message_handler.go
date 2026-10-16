@@ -3377,45 +3377,20 @@ func (service *rpcService) GetFeatureFlagList(ctx context.Context, in *extint.Fe
 	return response, nil
 }
 
-// AlexaAuthState is used to check the alexa authorization state
+// GetAlexaAuthState keeps the public RPC for the app and SDK, but this firmware has no Alexa: the robot is
+// always reported as not signed in, without a round trip to the engine.
 func (service *rpcService) GetAlexaAuthState(ctx context.Context, in *extint.AlexaAuthStateRequest) (*extint.AlexaAuthStateResponse, error) {
-	f, responseChan := engineProtoManager.CreateChannel(&extint.GatewayWrapper_AlexaAuthStateResponse{}, 1)
-	defer f()
-
-	_, _, err := engineProtoManager.Write(&extint.GatewayWrapper{
-		OneofMessageType: &extint.GatewayWrapper_AlexaAuthStateRequest{
-			AlexaAuthStateRequest: in,
+	return &extint.AlexaAuthStateResponse{
+		Status: &extint.ResponseStatus{
+			Code: extint.ResponseStatus_RESPONSE_RECEIVED,
 		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	payload, ok := <-responseChan
-	if !ok {
-		return nil, grpc.Errorf(codes.Internal, "Failed to retrieve message")
-	}
-	response := payload.GetAlexaAuthStateResponse()
-	response.Status = &extint.ResponseStatus{
-		Code: extint.ResponseStatus_RESPONSE_RECEIVED,
-	}
-	return response, nil
+		AuthState: extint.AlexaAuthState_ALEXA_AUTH_UNINITIALIZED,
+	}, nil
 }
 
-// AlexaOptIn is used to check the alexa authorization state
+// AlexaOptIn keeps the public RPC but there is no Alexa to opt into, so the request is rejected.
 func (service *rpcService) AlexaOptIn(ctx context.Context, in *extint.AlexaOptInRequest) (*extint.AlexaOptInResponse, error) {
-	_, _, err := engineProtoManager.Write(&extint.GatewayWrapper{
-		OneofMessageType: &extint.GatewayWrapper_AlexaOptInRequest{
-			AlexaOptInRequest: in,
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &extint.AlexaOptInResponse{
-		Status: &extint.ResponseStatus{
-			Code: extint.ResponseStatus_REQUEST_PROCESSING,
-		},
-	}, nil
+	return nil, grpc.Errorf(codes.Unimplemented, "Alexa is not supported by this firmware")
 }
 
 func SetNavMapBroadcastFrequency(frequency float32) error {

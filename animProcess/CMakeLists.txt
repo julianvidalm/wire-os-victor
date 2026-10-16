@@ -19,7 +19,6 @@ set(PLATFORM_LIBS "")
 set(PLATFORM_INCLUDES ${OPENCV_INCLUDE_PATHS})
 set(PLATFORM_COMPILE_DEFS "")
 
-option(ALEXA_ACOUSTIC_TEST "Enable alexa acoustic testing (no movement mode)" OFF)
 
 if (VICOS)
     set(PLATFORM_LIBS
@@ -64,7 +63,6 @@ target_link_libraries(victor_anim
   ${PLATFORM_LIBS}
   # Aubio beat detection
   ${AUBIO_LIBS}
-  ${AVS_LIBS}
   ${PFFFT_LIBS}
   ${MPG123_LIBS}
   PUBLIC
@@ -78,7 +76,6 @@ anki_build_strip(TARGET victor_anim)
 target_compile_definitions(victor_anim
   PRIVATE
   ${PLATFORM_COMPILE_DEFS}
-  ALEXA_ACOUSTIC_TEST=$<BOOL:${ALEXA_ACOUSTIC_TEST}>
 )
 
 target_include_directories(victor_anim

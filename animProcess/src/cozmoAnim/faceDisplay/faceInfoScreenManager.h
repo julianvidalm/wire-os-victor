@@ -85,15 +85,9 @@ public:
   // The FaceInfoScreenManager otherwise does nothing since drawing on 
   // screen is handled by ConnectionFlow when in pairing mode.
   void EnablePairingScreen(bool enable);
-  
-  // When enabled, switches to a screen showing the alexa pairing code, and optionally the URL,
-  // depending on how the auth process originated (app or voice command)
-  void EnableAlexaScreen(ScreenName screenName, const std::string& code, const std::string& url);
 
   // turn mute on or off (reason sent to DAS)
   void ToggleMute(const std::string& reason);
-  
-  void StartAlexaNotification();
 
   // When enabled, switches to a special camera screen used to show
   // the vision system's "mirror mode", which displays the camera feed
@@ -155,9 +149,6 @@ private:
   // double pressing the backpack and on the charger
   bool CanEnterPairingFromScreen( const ScreenName& screenName) const;
   
-  // Returns true if screenName is an Alexa screen
-  bool IsAlexaScreen(const ScreenName& screenName) const;
-  
   // Returns true if screenName is a screen that should cause the behavior system to Wait.
   // Note that Pairing is handled another way, so is not included here.
   bool ScreenNeedsWait(const ScreenName& screenName) const;
@@ -188,9 +179,7 @@ private:
   void DrawIMUInfo(const RobotState& state);
   void DrawMotorInfo(const RobotState& state);
   void DrawCustomText();
-  void DrawAlexaFace();
   void DrawMuteAnimation();
-  void DrawAlexaNotification();
   
   // Draw the _scratchDrawingImg to the face
   void DrawScratch();
@@ -237,9 +226,6 @@ private:
   WebService::WebService* _webService;
   
   Anim::AnimationStreamer* _animationStreamer = nullptr;
-  
-  std::string _alexaCode;
-  std::string _alexaUrl;
   
   bool _drawFAC = false;
   bool _engineLoaded = false;

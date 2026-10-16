@@ -16,7 +16,6 @@
 #include "clad/types/behaviorComponent/streamAndLightEffect.h"
 #include "coretech/common/engine/utils/timer.h"
 #include "engine/actions/animActions.h"
-#include "engine/aiComponent/alexaComponent.h"
 #include "engine/aiComponent/behaviorComponent/activeFeatureComponent.h"
 #include "engine/aiComponent/behaviorComponent/behaviorContainer.h"
 #include "engine/aiComponent/behaviorComponent/behaviorExternalInterface/beiRobotInfo.h"
@@ -393,14 +392,6 @@ void BehaviorSleepCycle::OnBehaviorDeactivated()
     case SleepStateID::HeldInPalmSleep:
     case SleepStateID::DeepSleep:
     case SleepStateID::LightSleep: {
-
-      // if alexa is activating, don't play a get out
-      const auto& alexaComp = GetAIComp<AlexaComponent>();
-      const bool alexaIsIdle = alexaComp.IsIdle();
-
-      if( !alexaIsIdle ) {
-        break;
-      }
 
       switch( _dVars.reactionState ) {
         case SleepReactionType::NotReacting:

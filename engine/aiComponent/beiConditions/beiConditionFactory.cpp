@@ -12,7 +12,6 @@
 
 #include "engine/aiComponent/beiConditions/beiConditionFactory.h"
 
-#include "engine/aiComponent/beiConditions/conditions/conditionAlexaInteractionActive.h"
 #include "engine/aiComponent/beiConditions/conditions/conditionAnyStimuli.h"
 #include "engine/aiComponent/beiConditions/conditions/conditionAnyUserIntent.h"
 #include "engine/aiComponent/beiConditions/conditions/conditionBatteryLevel.h"
@@ -213,11 +212,6 @@ IBEIConditionPtr BEIConditionFactory::CreateBEICondition(const Json::Value& conf
   IBEIConditionPtr condition = nullptr;
 
   switch (conditionType) {
-    case BEIConditionType::AlexaInteractionActive:
-    {
-      condition = std::make_shared<ConditionAlexaInteractionActive>(config);
-      break;
-    }
     case BEIConditionType::AnyStimuli:
     {
       condition = std::make_shared<ConditionAnyStimuli>(config);

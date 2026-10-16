@@ -39,7 +39,6 @@
 namespace Anki {
   namespace AudioUtil {
     struct SpeechRecognizerCallbackInfo;
-    struct SpeechRecognizerIgnoreReason;
   }
   namespace Vector {
     namespace CloudMic {
@@ -58,7 +57,6 @@ namespace Anki {
       struct RobotToEngine;
     }
     class SpeechRecognizerSystem;
-    enum class AlexaSimpleState : uint8_t;
   }
   namespace Util {
     namespace Data {
@@ -116,10 +114,6 @@ public:
   
   void ResetBeatDetector();
   
-  void SetAlexaState(AlexaSimpleState state);
-  
-  void SetButtonWakeWordIsAlexa(bool isAlexa);
-  
   void ToggleMicMute();
   bool IsMicMuted() const { return _micMuted; }
   
@@ -161,8 +155,6 @@ public:
 private:
 
   const Anim::AnimContext* _context;
-
-  bool IsButtonPressAlexa() const;
 
   std::string _writeLocationDir = "";
   std::string _persistentFolder;
@@ -209,15 +201,8 @@ private:
 
   bool _batteryLow = false;
   bool _enableDataCollection = false;
-  bool _buttonPressIsAlexa = false;
-  AlexaSimpleState _alexaState;
   
   std::atomic<bool> _micMuted;
-
-  // if hey vector is spoken, we'll need to abort the alexa pairing screen if it's active. The overly verbose
-  // name is becuase we hardcode the "reason" that we are leaving the pairing screen based on the assumption
-  // that this is triggered via a "hey vector" wakeword
-  std::atomic<bool> _abortAlexaScreenDueToHeyVector;
   
 #if ANKI_DEV_CHEATS
   std::list<Anki::Util::IConsoleFunction> _devConsoleFuncs;
@@ -231,13 +216,11 @@ private:
   float GetIncomingMicDataPercentUsed();
   void SendUdpMessage(const CloudMic::Message& msg);
   
-  void SendTriggerDetectionToWebViz(const AudioUtil::SpeechRecognizerCallbackInfo& info,
-                                    const AudioUtil::SpeechRecognizerIgnoreReason& ignoreReason);
+  void SendTriggerDetectionToWebViz(const AudioUtil::SpeechRecognizerCallbackInfo& info);
   
   void SendRecentTriggerDetectionToWebViz(const std::function<void(const Json::Value&)>& sendFunc);
 
-  void SendRecognizerDasLog(const AudioUtil::SpeechRecognizerCallbackInfo& info,
-                            const char* stateStr) const;
+  void SendRecognizerDasLog(const AudioUtil::SpeechRecognizerCallbackInfo& info) const;
 };
 
 } // namespace MicData

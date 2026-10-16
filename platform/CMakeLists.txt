@@ -62,7 +62,6 @@ if (VICOS)
     libopencv_imgproc.so.412
     libopencv_ml.so.412
     libopencv_objdetect.so.412
-    ${AVS_LIB_NAMES}
   )
   foreach (target ${STRIP_TARGETS})
     add_strip_target(${target})

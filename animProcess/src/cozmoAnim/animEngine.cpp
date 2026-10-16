@@ -12,7 +12,6 @@
 
 #include "cozmoAnim/animEngine.h"
 
-#include "cozmoAnim/alexa/alexa.h"
 #include "cozmoAnim/animComms.h"
 #include "cozmoAnim/animContext.h"
 #include "cozmoAnim/animProcessMessages.h"
@@ -141,8 +140,6 @@ Result AnimEngine::Init()
   _context->GetWebService()->Start(_context->GetDataPlatform(),
                                    _context->GetDataLoader()->GetWebServerAnimConfig());
   FaceInfoScreenManager::getInstance()->Init(_context.get(), _animationStreamer.get());
-
-  _context->GetAlexa()->Init(_context.get());
 
   const auto pm = _context->GetPerfMetric();
   pm->Init(_context->GetDataPlatform(), _context->GetWebService());
