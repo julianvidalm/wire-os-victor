@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-anki:
+    name: build-anki
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      # The toolchain, build cache and Docker image need more space than the runner has free by default.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker image prune --all --force
+          df -h /
+
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      # vicos-sdk, go, protoc and upx, downloaded by project/build-scripts/download-*.sh at pinned versions.
+      - name: Cache build tools
+        uses: actions/cache@v4
+        with:
+          path: anki-deps
+          key: anki-deps-${{ hashFiles('project/build-scripts/download-*.sh', 'project/victor/build-victor.sh') }}
+
+      - name: Cache compiler and Go caches
+        uses: actions/cache@v4
+        with:
+          path: build/cache
+          key: build-cache-${{ github.sha }}
+          restore-keys: build-cache-
+
+      # build-v.sh runs `docker run -it`, which needs a terminal; `script` provides one and returns the build's exit code.
+      - name: Build /anki
+        run: script -qec "./build/build-v.sh" /dev/null
+
+      - name: Check build outputs
+        run: |
+          for f in bin/vic-anim bin/vic-engine bin/vic-robot bin/vic-cloud bin/vic-switchboard lib/libcozmo_engine.so; do
+            test -s "_build/vicos/Release/$f" || { echo "missing $f"; exit 1; }
+          done
+          du -sh _build/vicos/Release
