@@ -1,16 +1,18 @@
 /**
  * File: micTap.h
  *
- * Description: Streams what Vector hears and plays to one TCP client on the LAN (the PC "cortex"), so wake word
- *              detection, speech recognition and echo cancellation can run off the robot.
+ * Description: Hands what Vector hears and plays to vic-cloud, which uploads it to the cortex (wire-pod) over
+ *              TLS, so wake word detection, speech recognition and echo cancellation can run off the robot. The
+ *              robot opens no network port: frames go to the local unix datagram socket /dev/socket/mictap_sock,
+ *              served here; vic-cloud is its only client and announces itself with "ANKICONN" (every 5 s).
  *
  *              Off by default. Turn it on at runtime with the console var MicTap_Enable (vic-anim web server,
  *              port 8889: /consolevarset?key=MicTap_Enable&value=1) or at boot by creating the file
- *              "micTapEnabled" in the persistent data folder. An optional file "micTapAllowedPeer" in the same
- *              folder holds the only IPv4 address allowed to connect.
+ *              "micTapEnabled" in the persistent data folder.
  *
- *              Wire format v1, little-endian, robot listens on TCP 8899:
+ *              Wire format v1, little-endian, one datagram per hello or frame:
  *                hello  : "VMT1" | u16 version (1) | u32 mic rate | u32 speaker rate | u16 reserved
+ *                         (sent when the client appears and then once per second, so uploads can start any time)
  *                frame  : u8 type | u8 flags | u16 reserved | u32 seq | u64 timestamp_ms | u32 payload bytes | payload
  *                  type 1 mic     : 160 x s16 mono @16 kHz, flags bit0 speaker active, bit1 robot moving
  *                  type 2 speaker : 1024 x s16 mono @32 kHz, flags bit0 buffer has audio (not silence)
@@ -33,10 +35,13 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+class LocalUdpServer;
 
 namespace Anki {
 namespace Vector {
@@ -44,8 +49,6 @@ namespace MicData {
 
 class MicTap {
 public:
-  static constexpr uint16_t kPort = 8899;
-
   // sink may be null (no speaker frames then). persistentFolder ends with a separator.
   MicTap(AudioEngine::PlugIns::AkAlsaSinkPlugIn* sink, const std::string& persistentFolder);
   ~MicTap();
@@ -78,22 +81,21 @@ private:
 
   void OnSpeakerBuffer(const SinkTypes::AudioChunk& chunk, bool hasData);
   void SenderLoop();
-  bool OpenListener();
-  void CloseListener();
-  void AcceptClient();
-  void CloseClient();
-  bool SendAll(const uint8_t* data, size_t size);
-  bool SendHello();
-  bool SendQueuedFrames();
-  bool SendStats();
-  bool ClientHungUp();
+  bool StartServer();
+  void StopServer();
+  void PollClient();
+  void StartStreaming();
+  void StopStreaming();
+  void SendDatagram();
+  void SendHello();
+  void SendQueuedFrames();
+  void SendStats();
 
   AudioEngine::PlugIns::AkAlsaSinkPlugIn* _sink = nullptr;
   AudioEngine::PlugIns::AkAlsaSinkPlugIn::PlaybackObserverId _sinkObserverId =
     AudioEngine::PlugIns::AkAlsaSinkPlugIn::kInvalidPlaybackObserverId;
-  uint32_t _allowedPeer = 0;  // IPv4 in network byte order; 0 accepts any peer
 
-  // True only while a client is connected: producers skip all work otherwise
+  // True only while vic-cloud is connected: producers skip all work otherwise
   std::atomic<bool> _streaming{false};
 
   std::mutex _queueMutex;
@@ -106,8 +108,8 @@ private:
   uint32_t _speakerDropped = 0;
 
   // Owned by the sender thread
-  int _listenFd = -1;
-  int _clientFd = -1;
+  std::unique_ptr<LocalUdpServer> _server;
+  uint32_t _sendFailures = 0;  // consecutive; the client is dropped after a few
   std::vector<uint8_t> _sendBuffer;
   std::vector<MicFrame> _micBatch;
   std::vector<SpeakerFrame> _speakerBatch;
