@@ -192,6 +192,24 @@ func TestSendFailureReconnectsAfterBackoffAndResendsHello(t *testing.T) {
 	}
 }
 
+// A server that accepts the connection but rejects every upload (for example an older wire-pod answering
+// Unimplemented) must not be retried every MinBackoff forever: the backoff keeps growing until an upload works.
+func TestRejectedUploadsBackOffExponentially(t *testing.T) {
+	d := &fakeDialer{prepare: func(_ int, s *fakeStream) { s.failAt = 1 }} // hello accepted, first frame fails
+	in, stop := start(t, d, Config{MinBackoff: 40 * time.Millisecond, MaxBackoff: time.Second})
+	in <- hello1
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for seq := byte(0); time.Now().Before(deadline); seq++ {
+		in <- frame(seq)
+		time.Sleep(5 * time.Millisecond)
+	}
+	stop()
+	// Backoffs 40, 80, 160, 320 ms: at most 4-5 attempts in 500 ms; a constant 40 ms backoff gives about 12.
+	if n := d.dialCount(); n > 5 {
+		t.Fatalf("%d uploads in 500 ms: the backoff does not grow for rejected uploads", n)
+	}
+}
+
 func TestDialFailureBacksOff(t *testing.T) {
 	d := &fakeDialer{failN: 1}
 	in, stop := start(t, d, Config{MinBackoff: 100 * time.Millisecond, MaxBackoff: 100 * time.Millisecond})

@@ -15,6 +15,10 @@ import (
 
 const helloSize = 16
 
+// healthyFrames sent in one upload (about 1 s of mic audio) prove the cortex accepts it; only then is the
+// reconnect backoff reset, so a server that rejects every upload is retried less and less often.
+const healthyFrames = 100
+
 var helloMagic = []byte("VMT1")
 
 func isHello(b []byte) bool {
@@ -44,6 +48,7 @@ type Forwarder struct {
 	hello   []byte
 	stream  Stream
 	backoff time.Duration
+	sent    int // frames sent in the current upload
 	retryAt time.Time
 	dropped uint64 // frames not forwarded: before a hello, while reconnecting, or after a failed send
 }
@@ -108,6 +113,10 @@ func (f *Forwarder) handle(ctx context.Context, b []byte) {
 		f.dropped++
 		f.closeStream("send failed")
 		f.backOff("send", err)
+		return
+	}
+	if f.sent++; f.sent == healthyFrames {
+		f.backoff = 0
 	}
 }
 
@@ -125,7 +134,7 @@ func (f *Forwarder) open(ctx context.Context) bool {
 		f.backOff("send hello", err)
 		return false
 	}
-	f.stream, f.backoff = s, 0
+	f.stream, f.sent = s, 0
 	f.cfg.Logf("mictap: upload started")
 	return true
 }
