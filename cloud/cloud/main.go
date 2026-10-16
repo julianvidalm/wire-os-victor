@@ -212,7 +212,7 @@ func main() {
 			return
 		}
 	}
-	go runMicTap()
+	go runMicTap(process)
 
 	options = append(options, cloudproc.WithVoice(process))
 	options = append(options, cloudproc.WithVoiceOptions(voiceOpts...))

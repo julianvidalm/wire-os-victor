@@ -9,7 +9,9 @@ import (
 	"github.com/digital-dream-labs/vector-cloud/internal/ipc"
 	"github.com/digital-dream-labs/vector-cloud/internal/log"
 	"github.com/digital-dream-labs/vector-cloud/internal/mictap"
+	mictappb "github.com/digital-dream-labs/vector-cloud/internal/proto/mictap"
 	"github.com/digital-dream-labs/vector-cloud/internal/robot"
+	"github.com/digital-dream-labs/vector-cloud/internal/voice"
 
 	"github.com/gwatts/rootcerts"
 	"google.golang.org/grpc"
@@ -21,7 +23,7 @@ const micTapQueueLen = 256
 
 // runMicTap forwards vic-anim's MicTap datagrams (mictap_sock) to wire-pod, on the chipper address from
 // server_config.json, over TLS with the trusted roots that include the pinned wire-pod certificate.
-func runMicTap() {
+func runMicTap(process *voice.Process) {
 	esn, err := robot.ReadESN()
 	if err != nil {
 		log.Println("mictap: cannot read ESN, not forwarding:", err)
@@ -46,7 +48,16 @@ func runMicTap() {
 
 	log.Println("mictap: forwarding to", config.Env.Chipper)
 	mictap.New(mictap.Config{
-		Dial: mictap.NewGRPCDialer(conn, esn),
+		Dial: mictap.NewSessionDialer(conn, esn, func(cmd *mictappb.Command) {
+			// The cortex answers what it heard: deliver it to the engine like a chipper response.
+			result, err := mictap.CommandToIntent(cmd)
+			if err != nil {
+				logf("mictap: ignoring command: %v", err)
+				return
+			}
+			logf("mictap: cortex command %s", result.Intent)
+			process.InjectResult(result)
+		}, logf),
 		Logf: logf,
 	}).Run(context.Background(), queue)
 }

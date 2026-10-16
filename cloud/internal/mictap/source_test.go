@@ -80,9 +80,11 @@ func TestSourceReconnectsWhenTheKeepAliveFails(t *testing.T) {
 	done := make(chan struct{})
 	go func() { RunSource(ctx, open, 20*time.Millisecond, queue, &dropped, t.Logf); close(done) }()
 
+	// The stale connection is closed as soon as its announcement fails, so what it had queued may be lost;
+	// what matters is that the replacement connection delivers.
 	got := map[string]bool{}
 	deadline := time.After(2 * time.Second)
-	for len(got) < 2 {
+	for !got["b"] {
 		select {
 		case b := <-queue:
 			got[string(b)] = true

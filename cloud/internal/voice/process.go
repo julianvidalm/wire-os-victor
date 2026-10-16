@@ -388,6 +388,13 @@ func (p *Process) writeError(reason cloud.ErrorType, err error) {
 	p.writeResponse(cloud.NewMessageWithError(&cloud.IntentError{Error: reason, Extra: err.Error()}))
 }
 
+// InjectResult hands an intent result to the engine as if it answered a voice request. The cortex uses it to
+// answer what it heard through MicTap, without the robot's own wake word; the engine accepts such a result at
+// any time.
+func (p *Process) InjectResult(result *cloud.IntentResult) {
+	p.writeResponse(cloud.NewMessageWithResult(result))
+}
+
 func (p *Process) writeResponse(response *cloud.Message) {
 	for _, r := range p.intents {
 		err := r.Send(response)
