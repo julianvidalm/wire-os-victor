@@ -45,8 +45,10 @@ AlexaPlaybackRecognizerComponent::~AlexaPlaybackRecognizerComponent()
   _isActive = false;
   _isInitialized = false;
 
-  // Clear sink plugin callback
-  _sinkPlugin->SetPlaybackBufferCallback( nullptr );
+  // Stop observing the speaker before the worker and buffers go away
+  if ( _sinkPlugin != nullptr ) {
+    _sinkPlugin->RemovePlaybackObserver( _playbackObserverId );
+  }
 
   // Stop Worker thread
   _processThreadStop = true;
@@ -105,9 +107,10 @@ bool AlexaPlaybackRecognizerComponent::Init()
     return false;
   }
   
-  // Setup sink plugin callback
-  _sinkPlugin->SetPlaybackBufferCallback( std::bind( &AlexaPlaybackRecognizerComponent::SinkPluginCallback,
-                                                     this, std::placeholders::_1, std::placeholders::_2 ) );
+  // Observe speaker playback
+  _playbackObserverId = _sinkPlugin->AddPlaybackObserver(
+    std::bind( &AlexaPlaybackRecognizerComponent::SinkPluginCallback,
+               this, std::placeholders::_1, std::placeholders::_2 ) );
   _isInitialized = true;
   return _isInitialized;
 }

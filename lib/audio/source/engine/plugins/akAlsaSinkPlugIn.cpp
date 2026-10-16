@@ -48,7 +48,10 @@ bool AkAlsaSinkPlugIn::RegisterPlugIn()
       if ( _audioThreadAffinityMask != SetupConfig::ThreadProperties::kInvalidAffinityMask ) {
         _pluginInstance->m_uCpuMask = _audioThreadAffinityMask;
       }
-      _pluginInstance->m_writeBufferToAlsaCallback = _writeToAlsaCallback;
+      _pluginInstance->m_writeBufferToAlsaCallback =
+        [this](const AkAlsaSinkPluginTypes::AudioChunk& chunk, bool hasData) {
+          NotifyPlaybackObservers(chunk, hasData);
+        };
     };
   success = true;
 #endif
@@ -103,14 +106,38 @@ uint8_t  AkAlsaSinkPlugIn::GetNumberOfChannels() const
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-  void AkAlsaSinkPlugIn::SetPlaybackBufferCallback(const AkAlsaSinkPluginTypes::WriteBufferToAlsaCallbackFunc callback)
+AkAlsaSinkPlugIn::PlaybackObserverId
+AkAlsaSinkPlugIn::AddPlaybackObserver(AkAlsaSinkPluginTypes::WriteBufferToAlsaCallbackFunc observer)
 {
-  _writeToAlsaCallback = callback;
-#if defined VICOS && not defined EXCLUDE_ANKI_AUDIO_LIBS
-  if (_pluginInstance != nullptr) {
-    _pluginInstance->m_writeBufferToAlsaCallback = _writeToAlsaCallback;
+  if (!observer) {
+    return kInvalidPlaybackObserverId;
   }
-#endif
+  std::lock_guard<std::mutex> lock(_observersMutex);
+  const PlaybackObserverId observerId = _nextObserverId++;
+  _observers.emplace_back(observerId, std::move(observer));
+  return observerId;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void AkAlsaSinkPlugIn::RemovePlaybackObserver(PlaybackObserverId observerId)
+{
+  // Holding the same lock as NotifyPlaybackObservers guarantees no call to this observer is still running
+  std::lock_guard<std::mutex> lock(_observersMutex);
+  for (auto it = _observers.begin(); it != _observers.end(); ++it) {
+    if (it->first == observerId) {
+      _observers.erase(it);
+      return;
+    }
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void AkAlsaSinkPlugIn::NotifyPlaybackObservers(const AkAlsaSinkPluginTypes::AudioChunk& chunk, bool hasData)
+{
+  std::lock_guard<std::mutex> lock(_observersMutex);
+  for (const auto& observer : _observers) {
+    observer.second(chunk, hasData);
+  }
 }
 
 
