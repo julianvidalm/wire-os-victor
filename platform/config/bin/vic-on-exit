@@ -37,6 +37,10 @@ function exit_error ()
 {
     if [ "${VIC_ONFAILURE_FAULTCODE}" != "0" ]; then
         if [ ! -e /run/fault_code.pending ]; then
+            # A socket-activated fault-code.service left in the failed state (for example after a handler that
+            # could not read its code) is not started again, so later faults would be dropped and the robot
+            # would stay frozen. Clear that state before writing the code.
+            /bin/systemctl reset-failed fault-code.service > /dev/null 2>&1 || true
             echo ${VIC_ONFAILURE_FAULTCODE} > /run/fault_code
         fi
     fi
