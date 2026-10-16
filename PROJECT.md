@@ -40,5 +40,13 @@ Each replaced or removed file is backed up once in `/data/anki-backup`. A CLAD e
 
 ## Workflow
 
-- `main` is protected: changes land through a pull request, history stays linear (squash merge only), conversations must be resolved, and force pushes and deletion are blocked.
+- `main` is protected: changes land through a pull request, the `build-anki` check must pass, history stays linear (squash merge only), conversations must be resolved, and force pushes and deletion are blocked.
 - Branch names: `feat/...`, `fix/...`, `refactor/...`, `chore/...`. Commit messages follow Conventional Commits.
+
+## CI
+
+| Workflow | Trigger | What it does |
+|----------|---------|--------------|
+| `ci.yml` (`build-anki`) | pull request, push to `main`, manual | builds all of `/anki` with `build/build-v.sh` and checks that the main binaries exist |
+
+The build downloads pinned external inputs: vicos-sdk `6.0.0-r08` from the os-vector/wire-os-externals GitHub release, go, protoc and upx from their official releases, and the `EXTERNALS` submodule (os-vector/wire-os-externals) at the recorded commit. CI caches them in `anki-deps` together with the ccache and Go caches in `build/cache`. A run takes about 35 minutes with a cold cache.
