@@ -1,5 +1,7 @@
 # WireOS - /anki folder
 
+> **v3ctor:** this repository is the robot firmware of the v3ctor project and is developed independently of the upstream WireOS repositories. See [PROJECT.md](PROJECT.md) for its origin, license, changes, build and deploy notes. The rest of this README is the upstream text.
+
 **This is where the personality code for WireOS exists.**
 
 For the entire OS, check out the [wire-os](https://github.com/os-vector/wire-os) repo. This repo, `wire-os-victor`, is a submodule of that, and just builds the /anki folder which goes into that OS. However, `wire-os-victor` can still be built standalone and deployed to a robot which is running a good base OTA. This is recommended for developers.
