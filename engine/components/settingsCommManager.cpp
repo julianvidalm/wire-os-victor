@@ -42,6 +42,20 @@ namespace
   static const bool kUpdateAccountSettingsJdoc = true;
   static const bool kUpdateUserEntitlementsJdoc = true;
 
+  // Json::Value::asString() throws for objects and arrays (for example custom_eye_color), which used to crash
+  // the engine while it logged a rejected setting change; serialize those values instead.
+  std::string ToLogString(const Json::Value& value)
+  {
+    if (value.isObject() || value.isArray()) {
+      std::string str = Json::FastWriter().write(value);
+      if (!str.empty() && (str.back() == '\n')) {
+        str.pop_back();
+      }
+      return str;
+    }
+    return value.asString();
+  }
+
 #if REMOTE_CONSOLE_ENABLED
 
 
@@ -273,7 +287,7 @@ bool SettingsCommManager::HandleRobotSettingChangeRequest(const external_interfa
     {
       LOG_ERROR("SettingsCommManager.HandleRobotSettingChangeRequest",
                 "Error setting key %s to value %s",
-                RobotSetting_Name(robotSetting).c_str(), settingJson.asString().c_str());
+                RobotSetting_Name(robotSetting).c_str(), ToLogString(settingJson).c_str());
     }
   }
 
@@ -304,7 +318,7 @@ bool SettingsCommManager::HandleAccountSettingChangeRequest(const external_inter
     {
       LOG_ERROR("SettingsCommManager.HandleAccountSettingChangeRequest",
                 "Error setting key %s to value %s", external_interface::AccountSetting_Name(accountSetting).c_str(),
-                settingJson.asString().c_str());
+                ToLogString(settingJson).c_str());
     }
   }
 
@@ -335,7 +349,7 @@ bool SettingsCommManager::HandleUserEntitlementChangeRequest(const external_inte
     {
       LOG_ERROR("SettingsCommManager.HandleUserEntitlementChangeRequest",
                 "Error setting key %s to value %s", external_interface::UserEntitlement_Name(userEntitlement).c_str(),
-                settingJson.asString().c_str());
+                ToLogString(settingJson).c_str());
     }
   }
 
