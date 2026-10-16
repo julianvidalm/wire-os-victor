@@ -16,13 +16,14 @@ var (
 
 func frame(seq byte) []byte { return []byte{1, 0, 0, 0, seq, 0, 0, 0} }
 
+func join(parts ...[]byte) []byte { return bytes.Join(parts, nil) }
+
 // fakeStream records what one upload received.
 type fakeStream struct {
-	mu      sync.Mutex
-	chunks  [][]byte
-	closed  bool
-	failAt  int // Send fails once this many chunks were sent (0: never)
-	sendErr error
+	mu     sync.Mutex
+	chunks [][]byte
+	closed bool
+	failAt int // Send fails once this many chunks were sent (0: never)
 }
 
 func (s *fakeStream) Send(b []byte) error {
@@ -42,26 +43,30 @@ func (s *fakeStream) CloseAndRecv() error {
 	return nil
 }
 
-func (s *fakeStream) snapshot() ([][]byte, bool) {
+// bytes returns everything the upload received, and the number of Send calls.
+func (s *fakeStream) bytes() ([]byte, int, bool) {
+	if s == nil {
+		return nil, 0, false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([][]byte(nil), s.chunks...), s.closed
+	return join(s.chunks...), len(s.chunks), s.closed
 }
 
-// fakeDialer hands out streams in order and records dial times.
+// fakeDialer hands out streams in order.
 type fakeDialer struct {
 	mu      sync.Mutex
 	streams []*fakeStream
 	failN   int // the first failN dials fail
-	dials   []time.Time
+	dials   int
 	prepare func(n int, s *fakeStream)
 }
 
 func (d *fakeDialer) Dial(context.Context) (Stream, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.dials = append(d.dials, time.Now())
-	if len(d.dials) <= d.failN {
+	d.dials++
+	if d.dials <= d.failN {
 		return nil, errors.New("connection refused")
 	}
 	s := &fakeStream{}
@@ -84,7 +89,7 @@ func (d *fakeDialer) stream(i int) *fakeStream {
 func (d *fakeDialer) dialCount() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return len(d.dials)
+	return d.dials
 }
 
 func start(t *testing.T, d *fakeDialer, cfg Config) (chan<- []byte, func()) {
@@ -99,8 +104,11 @@ func start(t *testing.T, d *fakeDialer, cfg Config) (chan<- []byte, func()) {
 	if cfg.MaxBackoff == 0 {
 		cfg.MaxBackoff = 50 * time.Millisecond
 	}
+	if cfg.FlushInterval == 0 {
+		cfg.FlushInterval = 5 * time.Millisecond
+	}
 	cfg.Logf = t.Logf
-	in := make(chan []byte, 64)
+	in := make(chan []byte, 256)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { New(cfg).Run(ctx, in); close(done) }()
@@ -117,6 +125,8 @@ func eventually(t *testing.T, what string, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func received(d *fakeDialer, i int) []byte { b, _, _ := d.stream(i).bytes(); return b }
 
 func TestFramesBeforeHelloAreDroppedWithoutDialing(t *testing.T) {
 	d := &fakeDialer{}
@@ -137,14 +147,25 @@ func TestStreamStartsWithHelloThenFramesInOrder(t *testing.T) {
 	in <- frame(0)
 	in <- hello1 // periodic repeat: not sent again
 	in <- frame(1)
-	eventually(t, "3 chunks", func() bool { s := d.stream(0); c, _ := snap(s); return len(c) == 3 })
+	want := join(hello1, frame(0), frame(1))
+	eventually(t, "hello and both frames", func() bool { return bytes.Equal(received(d, 0), want) })
 	stop()
-	chunks, closed := d.stream(0).snapshot()
-	if !bytes.Equal(chunks[0], hello1) || !bytes.Equal(chunks[1], frame(0)) || !bytes.Equal(chunks[2], frame(1)) {
-		t.Fatalf("chunks %v", chunks)
-	}
-	if !closed || d.dialCount() != 1 {
+	if _, _, closed := d.stream(0).bytes(); !closed || d.dialCount() != 1 {
 		t.Fatalf("closed %v dials %d", closed, d.dialCount())
+	}
+}
+
+func TestFramesAreBatchedIntoFewUploads(t *testing.T) {
+	d := &fakeDialer{}
+	in, stop := start(t, d, Config{FlushInterval: 100 * time.Millisecond})
+	in <- hello1
+	for seq := byte(0); seq < 30; seq++ { // 30 frames well within one flush interval
+		in <- frame(seq)
+	}
+	eventually(t, "30 frames", func() bool { return len(received(d, 0)) == len(hello1)+30*len(frame(0)) })
+	stop()
+	if _, sends, _ := d.stream(0).bytes(); sends > 3 {
+		t.Fatalf("%d Send calls for one hello and 30 frames: frames are not batched", sends)
 	}
 }
 
@@ -155,38 +176,31 @@ func TestChangedHelloRestartsTheStream(t *testing.T) {
 	in <- frame(0)
 	in <- hello2
 	in <- frame(1)
-	eventually(t, "second stream", func() bool { c, _ := snap(d.stream(1)); return len(c) == 2 })
+	eventually(t, "second stream", func() bool { return bytes.Equal(received(d, 1), join(hello2, frame(1))) })
 	stop()
-	first, closed := d.stream(0).snapshot()
-	second, _ := d.stream(1).snapshot()
-	if !closed || len(first) != 2 {
+	first, _, closed := d.stream(0).bytes()
+	if !closed || !bytes.Equal(first, join(hello1, frame(0))) {
 		t.Fatalf("first stream %v closed %v", first, closed)
-	}
-	if !bytes.Equal(second[0], hello2) || !bytes.Equal(second[1], frame(1)) {
-		t.Fatalf("second stream %v", second)
 	}
 }
 
 func TestSendFailureReconnectsAfterBackoffAndResendsHello(t *testing.T) {
 	d := &fakeDialer{prepare: func(n int, s *fakeStream) {
 		if n == 0 {
-			s.failAt = 2 // hello and frame 0 go through, frame 1 fails
+			s.failAt = 2 // the hello and one batch go through, the next batch fails
 		}
 	}}
 	in, stop := start(t, d, Config{MinBackoff: 100 * time.Millisecond, MaxBackoff: 100 * time.Millisecond})
 	in <- hello1
 	in <- frame(0)
-	in <- frame(1) // fails: stream closed, backoff starts
+	eventually(t, "first batch", func() bool { _, n, _ := d.stream(0).bytes(); return n == 2 })
+	in <- frame(1) // this batch fails: stream closed, backoff starts
+	eventually(t, "first stream closed", func() bool { _, _, closed := d.stream(0).bytes(); return closed })
 	in <- frame(2) // during backoff: dropped
-	eventually(t, "first stream closed", func() bool { _, closed := snap(d.stream(0)); return closed })
 	time.Sleep(150 * time.Millisecond)
 	in <- frame(3) // after backoff: redial with the cached hello
-	eventually(t, "second stream", func() bool { c, _ := snap(d.stream(1)); return len(c) == 2 })
+	eventually(t, "second stream", func() bool { return bytes.Equal(received(d, 1), join(hello1, frame(3))) })
 	stop()
-	second, _ := d.stream(1).snapshot()
-	if !bytes.Equal(second[0], hello1) || !bytes.Equal(second[1], frame(3)) {
-		t.Fatalf("second stream %v", second)
-	}
 	if d.dialCount() != 2 {
 		t.Fatalf("dials %d", d.dialCount())
 	}
@@ -195,7 +209,7 @@ func TestSendFailureReconnectsAfterBackoffAndResendsHello(t *testing.T) {
 // A server that accepts the connection but rejects every upload (for example an older wire-pod answering
 // Unimplemented) must not be retried every MinBackoff forever: the backoff keeps growing until an upload works.
 func TestRejectedUploadsBackOffExponentially(t *testing.T) {
-	d := &fakeDialer{prepare: func(_ int, s *fakeStream) { s.failAt = 1 }} // hello accepted, first frame fails
+	d := &fakeDialer{prepare: func(_ int, s *fakeStream) { s.failAt = 1 }} // hello accepted, first batch fails
 	in, stop := start(t, d, Config{MinBackoff: 40 * time.Millisecond, MaxBackoff: time.Second})
 	in <- hello1
 	deadline := time.Now().Add(500 * time.Millisecond)
@@ -222,7 +236,7 @@ func TestDialFailureBacksOff(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 	in <- frame(2)
-	eventually(t, "stream after backoff", func() bool { c, _ := snap(d.stream(0)); return len(c) == 2 })
+	eventually(t, "stream after backoff", func() bool { return bytes.Equal(received(d, 0), join(hello1, frame(2))) })
 	stop()
 }
 
@@ -231,9 +245,12 @@ func TestIdleStreamIsClosedAndReopenedOnNextFrame(t *testing.T) {
 	in, stop := start(t, d, Config{IdleTimeout: 80 * time.Millisecond})
 	in <- hello1
 	in <- frame(0)
-	eventually(t, "idle close", func() bool { _, closed := snap(d.stream(0)); return closed })
+	eventually(t, "idle close", func() bool { _, _, closed := d.stream(0).bytes(); return closed })
+	if !bytes.Equal(received(d, 0), join(hello1, frame(0))) {
+		t.Fatalf("pending frames were not flushed before the idle close: %v", received(d, 0))
+	}
 	in <- frame(1)
-	eventually(t, "reopened stream", func() bool { c, _ := snap(d.stream(1)); return len(c) == 2 })
+	eventually(t, "reopened stream", func() bool { return bytes.Equal(received(d, 1), join(hello1, frame(1))) })
 	stop()
 }
 
@@ -246,11 +263,4 @@ func TestPumpDropsWhenTheQueueIsFull(t *testing.T) {
 	if len(queue) != 2 || dropped != 1 {
 		t.Fatalf("queued %d dropped %d", len(queue), dropped)
 	}
-}
-
-func snap(s *fakeStream) ([][]byte, bool) {
-	if s == nil {
-		return nil, false
-	}
-	return s.snapshot()
 }

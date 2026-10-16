@@ -1,8 +1,9 @@
 // Package mictap forwards MicTap, the stream of what Vector hears and plays, from vic-anim to the cortex.
 //
-// vic-anim sends one MicTap v1 datagram per hello or frame to the local unix socket mictap_sock (see
-// animProcess/src/cozmoAnim/micData/micTap.h). The Forwarder opens an upload to wire-pod when frames arrive,
-// starts every upload with the latest hello, and closes it after a quiet period. The robot is the client, so
+// vic-anim sends the MicTap v1 stream to the local unix socket mictap_sock (see
+// animProcess/src/cozmoAnim/micData/micTap.h): each hello alone in one datagram, frames batched several per
+// datagram. The Forwarder opens an upload to wire-pod when frames arrive, starts every upload with the latest
+// hello, uploads the frames in one chunk per FlushInterval, and closes the upload after a quiet period. The robot is the client, so
 // no port is open on the robot and the link works across NAT boundaries.
 package mictap
 
@@ -40,8 +41,14 @@ type Config struct {
 	IdleTimeout time.Duration
 	// MinBackoff and MaxBackoff bound the wait before reconnecting after a failed dial or send.
 	MinBackoff, MaxBackoff time.Duration
-	Logf                   func(format string, a ...any)
+	// FlushInterval batches frames: one upload chunk per interval instead of one per datagram keeps the TLS
+	// and gRPC cost low on the robot (about 130 datagrams per second arrive).
+	FlushInterval time.Duration
+	Logf          func(format string, a ...any)
 }
+
+// maxChunkBytes flushes early so one chunk stays well under gRPC's default 4 MB message limit.
+const maxChunkBytes = 64 * 1024
 
 type Forwarder struct {
 	cfg     Config
@@ -49,6 +56,8 @@ type Forwarder struct {
 	stream  Stream
 	backoff time.Duration
 	sent    int // frames sent in the current upload
+	pending []byte
+	queued  int // frames in pending
 	retryAt time.Time
 	dropped uint64 // frames not forwarded: before a hello, while reconnecting, or after a failed send
 }
@@ -63,6 +72,9 @@ func New(cfg Config) *Forwarder {
 	if cfg.MaxBackoff < cfg.MinBackoff {
 		cfg.MaxBackoff = 30 * time.Second
 	}
+	if cfg.FlushInterval <= 0 {
+		cfg.FlushInterval = 100 * time.Millisecond
+	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
@@ -73,11 +85,15 @@ func New(cfg Config) *Forwarder {
 func (f *Forwarder) Run(ctx context.Context, datagrams <-chan []byte) {
 	idle := time.NewTimer(f.cfg.IdleTimeout)
 	stopTimer(idle)
+	flush := time.NewTicker(f.cfg.FlushInterval)
+	defer flush.Stop()
 	defer f.closeStream("stopping")
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-flush.C:
+			f.flush()
 		case <-idle.C:
 			f.closeStream("idle")
 		case b, ok := <-datagrams:
@@ -109,13 +125,29 @@ func (f *Forwarder) handle(ctx context.Context, b []byte) {
 		f.dropped++
 		return
 	}
-	if err := f.stream.Send(b); err != nil {
-		f.dropped++
-		f.closeStream("send failed")
-		f.backOff("send", err)
+	f.pending = append(f.pending, b...)
+	f.queued++
+	if len(f.pending) >= maxChunkBytes {
+		f.flush()
+	}
+}
+
+// flush uploads the batched frames as one chunk.
+func (f *Forwarder) flush() {
+	if f.stream == nil || len(f.pending) == 0 {
 		return
 	}
-	if f.sent++; f.sent == healthyFrames {
+	err := f.stream.Send(f.pending)
+	frames := f.queued
+	f.pending, f.queued = f.pending[:0], 0
+	if err != nil {
+		f.dropped += uint64(frames)
+		f.abort("send", err)
+		return
+	}
+	before := f.sent
+	f.sent += frames
+	if before < healthyFrames && f.sent >= healthyFrames {
 		f.backoff = 0
 	}
 }
@@ -149,9 +181,25 @@ func (f *Forwarder) backOff(op string, err error) {
 	f.cfg.Logf("mictap: %s failed, retrying in %v: %v", op, f.backoff, err)
 }
 
+// abort ends a failed upload without trying to send what is pending, and backs off.
+func (f *Forwarder) abort(op string, err error) {
+	f.pending, f.queued = f.pending[:0], 0
+	if f.stream != nil {
+		f.stream.CloseAndRecv()
+		f.stream = nil
+		f.cfg.Logf("mictap: upload ended (%s failed), %d frames not forwarded so far", op, f.dropped)
+	}
+	f.backOff(op, err)
+}
+
+// closeStream uploads what is pending and ends the upload.
 func (f *Forwarder) closeStream(reason string) {
 	if f.stream == nil {
 		return
+	}
+	f.flush()
+	if f.stream == nil {
+		return // the final flush failed and already ended the upload
 	}
 	err := f.stream.CloseAndRecv()
 	f.stream = nil
