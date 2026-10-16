@@ -10,7 +10,8 @@
  *              port 8889: /consolevarset?key=MicTap_Enable&value=1) or at boot by creating the file
  *              "micTapEnabled" in the persistent data folder.
  *
- *              Wire format v1, little-endian, one datagram per hello or frame:
+ *              Wire format v1, little-endian; the hello travels alone in one datagram, frames are batched
+ *              (several frames per datagram, never split):
  *                hello  : "VMT1" | u16 version (1) | u32 mic rate | u32 speaker rate | u16 reserved
  *                         (sent when the client appears and then once per second, so uploads can start any time)
  *                frame  : u8 type | u8 flags | u16 reserved | u32 seq | u64 timestamp_ms | u32 payload bytes | payload

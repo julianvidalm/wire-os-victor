@@ -35,23 +35,18 @@ func runMicTap() {
 	}
 	defer conn.Close()
 
-	sock := getSocketWithRetry(ipc.GetSocketPath("mictap_sock"), "cp_mictap")
-	defer sock.Close()
-	// vic-anim only learns its client from a datagram; repeat the connection packet so a restarted vic-anim
-	// finds us again.
-	go func() {
-		for range time.Tick(5 * time.Second) {
-			sock.Write([]byte("ANKICONN"))
-		}
-	}()
-
+	// RunSource reconnects to mictap_sock whenever vic-anim replaces it (MicTap switched off and on, or a
+	// vic-anim restart), which a fixed connection would never notice.
 	queue := make(chan []byte, micTapQueueLen)
 	var queueDropped uint64
-	go mictap.Pump(sock.ReadBlock, queue, &queueDropped)
+	path := ipc.GetSocketPath("mictap_sock")
+	open := func() (mictap.Conn, error) { return ipc.NewUnixgramClient(path, "cp_mictap") }
+	logf := func(format string, a ...any) { log.Printf(format+"\n", a...) }
+	go mictap.RunSource(context.Background(), open, 5*time.Second, queue, &queueDropped, logf)
 
 	log.Println("mictap: forwarding to", config.Env.Chipper)
 	mictap.New(mictap.Config{
 		Dial: mictap.NewGRPCDialer(conn, esn),
-		Logf: func(format string, a ...any) { log.Printf(format+"\n", a...) },
+		Logf: logf,
 	}).Run(context.Background(), queue)
 }

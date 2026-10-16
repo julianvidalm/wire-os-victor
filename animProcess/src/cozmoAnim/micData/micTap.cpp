@@ -38,6 +38,9 @@ namespace {
   constexpr int kRecvBufferBytes = 4 * 1024;  // only "ANKICONN" packets arrive
   // Consecutive failed sends (vic-cloud gone) before the client is dropped until it announces itself again
   constexpr uint32_t kMaxSendFailures = 20;
+  // Frames of one send period travel in one datagram (the stream is a byte stream, so frames may share one):
+  // about 50 datagrams per second instead of 130, each well under the socket buffer.
+  constexpr size_t kMaxDatagramBytes = 16 * 1024;
 
   constexpr uint16_t kProtocolVersion = 1;
   constexpr uint8_t kFrameMic = 1;
@@ -303,14 +306,22 @@ void MicTap::SendQueuedFrames()
       _speakerQueue.pop_front();
     }
   }
+  _sendBuffer.clear();
   for (const auto& frame : _micBatch) {
-    _sendBuffer.clear();
     AppendFrame(_sendBuffer, kFrameMic, frame);
-    SendDatagram();
+    if (_sendBuffer.size() >= kMaxDatagramBytes) {
+      SendDatagram();
+      _sendBuffer.clear();
+    }
   }
   for (const auto& frame : _speakerBatch) {
-    _sendBuffer.clear();
     AppendFrame(_sendBuffer, kFrameSpeaker, frame);
+    if (_sendBuffer.size() >= kMaxDatagramBytes) {
+      SendDatagram();
+      _sendBuffer.clear();
+    }
+  }
+  if (!_sendBuffer.empty()) {
     SendDatagram();
   }
 }
