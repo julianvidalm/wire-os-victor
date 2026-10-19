@@ -16,6 +16,15 @@
         "active_feature": "MovementForward",
         "disable_wakeword_turn": true
       }
+    },
+    {
+      "cloud_intent": "intent_cortex_listening",
+      "response": {
+        "anim_group": "ag_cortex_listening",
+        "emotion_event": "",
+        "active_feature": "BasicVoiceCommand",
+        "disable_wakeword_turn": true
+      }
     }
   ],
 

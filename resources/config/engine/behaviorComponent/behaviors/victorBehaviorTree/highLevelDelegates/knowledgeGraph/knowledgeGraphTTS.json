@@ -4,7 +4,8 @@
   
   "associatedActiveFeature": "KnowledgeGraph",
 
-  "loopAnimation"            : "KnowledgeGraphAnswer",
-  "getOutAnimation"          : "KnowledgeGraphGetOut",
-  "emergencyGetOutAnimation" : "KnowledgeGraphGetOut"
+  "getInAnimation"           : "TextToSpeechGetIn",
+  "loopAnimation"            : "TextToSpeechGetLoop",
+  "getOutAnimation"          : "TextToSpeechGetOut",
+  "emergencyGetOutAnimation" : "TextToSpeechGetOut"
 }
