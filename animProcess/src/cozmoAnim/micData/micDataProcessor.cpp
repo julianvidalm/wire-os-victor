@@ -422,7 +422,7 @@ void MicDataProcessor::ProcessRawAudio(RobotTimeStamp_t timestamp,
 
   // ProcessMicrophonesSE just refreshed both noise flags for this block
   if (MicTap* micTap = _micDataSystem->GetMicTap()) {
-    micTap->OnMicBlock(timestamp, nextSample.audioBlock.data(), _isSpeakerActive, _robotWasMoving);
+    micTap->OnMicBlock(timestamp, nextSample.audioBlock.data(), audioChunk, _isSpeakerActive, _robotWasMoving);
   }
 
 #ifdef STANDALONE_SIM

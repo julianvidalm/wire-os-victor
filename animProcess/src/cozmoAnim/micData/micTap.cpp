@@ -29,8 +29,11 @@ namespace MicData {
 
 namespace {
   CONSOLE_VAR(bool, kMicTap_Enable, CONSOLE_GROUP, false);
+  // Raw 4-channel mic frames (type 4, ~128 kB/s), sent only while MicTap_Enable is on as well
+  CONSOLE_VAR(bool, kMicTap_RawEnable, CONSOLE_GROUP, false);
 
   const char* const kEnabledFile = "micTapEnabled";
+  const char* const kRawEnabledFile = "micTapRawEnabled";
   constexpr char kSocketPath[] = LOCAL_SOCKET_PATH "mictap_sock";
 
   // About 2.5 s of mic and speaker audio, so vic-cloud can stall briefly without losing frames
@@ -46,6 +49,7 @@ namespace {
   constexpr uint8_t kFrameMic = 1;
   constexpr uint8_t kFrameSpeaker = 2;
   constexpr uint8_t kFrameStats = 3;
+  constexpr uint8_t kFrameRawMic = 4;
   constexpr uint8_t kMicFlagSpeakerActive = 1 << 0;
   constexpr uint8_t kMicFlagRobotMoving = 1 << 1;
   constexpr uint8_t kSpeakerFlagHasData = 1 << 0;
@@ -89,6 +93,22 @@ namespace {
     const auto* bytes = reinterpret_cast<const uint8_t*>(frame.samples.data());
     out.insert(out.end(), bytes, bytes + payloadBytes);
   }
+
+  // The robot delivers the raw block channel-planar; the wire carries it interleaved, like a 4-channel .wav
+  template <typename Frame>
+  void AppendInterleavedFrame(std::vector<uint8_t>& out, uint8_t type, const Frame& frame)
+  {
+    const uint32_t payloadBytes = static_cast<uint32_t>(sizeof(frame.samples));
+    AppendFrameHeader(out, type, frame.flags, frame.seq, frame.timestamp_ms, payloadBytes);
+    const size_t start = out.size();
+    out.resize(start + payloadBytes);
+    auto* dest = reinterpret_cast<AudioUtil::AudioSample*>(out.data() + start);
+    for (size_t sample = 0; sample < kSamplesPerBlockPerChannel; ++sample) {
+      for (size_t channel = 0; channel < kNumInputChannels; ++channel) {
+        dest[kNumInputChannels * sample + channel] = frame.samples[channel * kSamplesPerBlockPerChannel + sample];
+      }
+    }
+  }
 }
 
 MicTap::MicTap(AudioEngine::PlugIns::AkAlsaSinkPlugIn* sink, const std::string& persistentFolder)
@@ -97,14 +117,19 @@ MicTap::MicTap(AudioEngine::PlugIns::AkAlsaSinkPlugIn* sink, const std::string& 
   if (Util::FileUtils::FileExists(persistentFolder + kEnabledFile)) {
     kMicTap_Enable = true;
   }
+  if (Util::FileUtils::FileExists(persistentFolder + kRawEnabledFile)) {
+    kMicTap_RawEnable = true;
+  }
   if (_sink != nullptr) {
     _sinkObserverId = _sink->AddPlaybackObserver(
       [this](const SinkTypes::AudioChunk& chunk, bool hasData) { OnSpeakerBuffer(chunk, hasData); });
   }
   _micBatch.reserve(kMicQueueFrames);
   _speakerBatch.reserve(kSpeakerQueueFrames);
+  _rawMicBatch.reserve(kRawMicQueueFrames);
   _senderThread = std::thread(&MicTap::SenderLoop, this);
-  LOG_INFO("MicTap.Init", "socket %s, enabled %d", kSocketPath, kMicTap_Enable ? 1 : 0);
+  LOG_INFO("MicTap.Init", "socket %s, enabled %d, raw %d", kSocketPath, kMicTap_Enable ? 1 : 0,
+           kMicTap_RawEnable ? 1 : 0);
 }
 
 MicTap::~MicTap()
@@ -120,11 +145,14 @@ MicTap::~MicTap()
 }
 
 void MicTap::OnMicBlock(RobotTimeStamp_t timestamp, const AudioUtil::AudioSample* samples,
-                        bool speakerActive, bool robotMoving)
+                        const AudioUtil::AudioSample* rawChunk, bool speakerActive, bool robotMoving)
 {
   if (!_streaming.load(std::memory_order_relaxed)) {
     return;
   }
+  const uint64_t timestamp_ms = static_cast<TimeStamp_t>(timestamp);
+  const uint8_t flags = (speakerActive ? kMicFlagSpeakerActive : 0) | (robotMoving ? kMicFlagRobotMoving : 0);
+  const bool sendRaw = kMicTap_RawEnable && (rawChunk != nullptr);
   {
     std::lock_guard<std::mutex> lock(_queueMutex);
     if (_micQueue.size() == _micQueue.capacity()) {
@@ -132,9 +160,22 @@ void MicTap::OnMicBlock(RobotTimeStamp_t timestamp, const AudioUtil::AudioSample
     }
     MicFrame& frame = _micQueue.push_back();
     std::memcpy(frame.samples.data(), samples, sizeof(frame.samples));
-    frame.timestamp_ms = static_cast<TimeStamp_t>(timestamp);
+    frame.timestamp_ms = timestamp_ms;
     frame.seq = _micSeq++;
-    frame.flags = (speakerActive ? kMicFlagSpeakerActive : 0) | (robotMoving ? kMicFlagRobotMoving : 0);
+    frame.flags = flags;
+
+    // Advances even with the raw switch off, so raw seq tracks time like the mic seq
+    const uint32_t rawSeq = _rawMicSeq++;
+    if (sendRaw) {
+      if (_rawMicQueue.size() == _rawMicQueue.capacity()) {
+        ++_rawMicDropped;
+      }
+      RawMicFrame& rawFrame = _rawMicQueue.push_back();
+      std::memcpy(rawFrame.samples.data(), rawChunk, sizeof(rawFrame.samples));  // interleaved by the sender
+      rawFrame.timestamp_ms = timestamp_ms;
+      rawFrame.seq = rawSeq;
+      rawFrame.flags = flags;
+    }
   }
 }
 
@@ -247,6 +288,7 @@ void MicTap::StartStreaming()
     std::lock_guard<std::mutex> lock(_queueMutex);
     _micQueue.clear();
     _speakerQueue.clear();
+    _rawMicQueue.clear();
   }
   _sendFailures = 0;
   _streaming = true;
@@ -295,6 +337,7 @@ void MicTap::SendQueuedFrames()
 {
   _micBatch.clear();
   _speakerBatch.clear();
+  _rawMicBatch.clear();
   {
     std::lock_guard<std::mutex> lock(_queueMutex);
     while (_micQueue.size() > 0) {
@@ -304,6 +347,10 @@ void MicTap::SendQueuedFrames()
     while (_speakerQueue.size() > 0) {
       _speakerBatch.push_back(_speakerQueue.front());
       _speakerQueue.pop_front();
+    }
+    while (_rawMicQueue.size() > 0) {
+      _rawMicBatch.push_back(_rawMicQueue.front());
+      _rawMicQueue.pop_front();
     }
   }
   _sendBuffer.clear();
@@ -321,6 +368,13 @@ void MicTap::SendQueuedFrames()
       _sendBuffer.clear();
     }
   }
+  for (const auto& frame : _rawMicBatch) {
+    AppendInterleavedFrame(_sendBuffer, kFrameRawMic, frame);
+    if (_sendBuffer.size() >= kMaxDatagramBytes) {
+      SendDatagram();
+      _sendBuffer.clear();
+    }
+  }
   if (!_sendBuffer.empty()) {
     SendDatagram();
   }
@@ -330,10 +384,17 @@ void MicTap::SendStats()
 {
   uint32_t micDropped = 0;
   uint32_t speakerDropped = 0;
+  uint32_t rawMicDropped = 0;
   {
     std::lock_guard<std::mutex> lock(_queueMutex);
     micDropped = _micDropped;
     speakerDropped = _speakerDropped;
+    rawMicDropped = _rawMicDropped;
+  }
+  // The stats frame layout is fixed (two totals), so raw drops are logged here and visible as raw seq gaps
+  if (rawMicDropped != _rawMicDroppedLogged) {
+    LOG_WARNING("MicTap.SendStats.RawMicDropped", "%u raw mic frames dropped in total", rawMicDropped);
+    _rawMicDroppedLogged = rawMicDropped;
   }
   _sendBuffer.clear();
   AppendFrameHeader(_sendBuffer, kFrameStats, 0, 0, NowMs(), 2 * sizeof(uint32_t));

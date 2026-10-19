@@ -10,6 +10,10 @@
  *              port 8889: /consolevarset?key=MicTap_Enable&value=1) or at boot by creating the file
  *              "micTapEnabled" in the persistent data folder.
  *
+ *              Raw microphone frames (type 4) have their own switch, off by default and independent of
+ *              MicTap_Enable: console var MicTap_RawEnable, or the file "micTapRawEnabled" in the persistent data
+ *              folder at boot. They are sent only while MicTap is enabled and the raw switch is on.
+ *
  *              Wire format v1, little-endian; the hello travels alone in one datagram, frames are batched
  *              (several frames per datagram, never split):
  *                hello  : "VMT1" | u16 version (1) | u32 mic rate | u32 speaker rate | u16 reserved
@@ -18,6 +22,11 @@
  *                  type 1 mic     : 160 x s16 mono @16 kHz, flags bit0 speaker active, bit1 robot moving
  *                  type 2 speaker : 1024 x s16 mono @32 kHz, flags bit0 buffer has audio (not silence)
  *                  type 3 stats   : u32 mic frames dropped | u32 speaker frames dropped (totals, once per second)
+ *                  type 4 raw mic : 4 x 160 x s16 interleaved (ch0 ch1 ch2 ch3 ch0 ...) at the native mic rate
+ *                                   (~15662 Hz), the same 10 ms block as the type 1 frame with the same timestamp,
+ *                                   taken before SignalEssence; flags as type 1. Its seq advances with every
+ *                                   block while streaming, so time with the raw switch off shows as a seq gap.
+ *                                   Raw drops are not in the stats frame (its layout is fixed); seq gaps show them.
  *              Timestamps of mic and speaker frames share one clock (steady_clock ms), so the client can align
  *              them. seq counts per type and skips when frames are dropped.
  */
@@ -57,14 +66,22 @@ public:
   MicTap& operator=(const MicTap&) = delete;
 
   // Called on the mic processing thread for every processed 10 ms block. Never blocks on the network.
+  // rawChunk is the same block before SignalEssence: kIncomingAudioChunkSize samples, channel-planar
+  // (channel c, sample i at rawChunk[c * kSamplesPerBlockPerChannel + i]).
   void OnMicBlock(RobotTimeStamp_t timestamp, const AudioUtil::AudioSample* samples,
-                  bool speakerActive, bool robotMoving);
+                  const AudioUtil::AudioSample* rawChunk, bool speakerActive, bool robotMoving);
 
 private:
   using SinkTypes = AudioEngine::PlugIns::AkAlsaSinkPluginTypes;
 
   struct MicFrame {
     std::array<AudioUtil::AudioSample, kSamplesPerBlockPerChannel> samples;
+    uint64_t timestamp_ms;
+    uint32_t seq;
+    uint8_t flags;
+  };
+  struct RawMicFrame {
+    std::array<AudioUtil::AudioSample, kIncomingAudioChunkSize> samples;  // channel-planar, as received
     uint64_t timestamp_ms;
     uint32_t seq;
     uint8_t flags;
@@ -79,6 +96,7 @@ private:
   // About 2 s of each stream; when the client falls behind the oldest frames are dropped and counted
   static constexpr size_t kMicQueueFrames = 200;
   static constexpr size_t kSpeakerQueueFrames = 64;
+  static constexpr size_t kRawMicQueueFrames = 200;
 
   void OnSpeakerBuffer(const SinkTypes::AudioChunk& chunk, bool hasData);
   void SenderLoop();
@@ -103,10 +121,13 @@ private:
   std::condition_variable _queueCondition;
   Util::FixedCircularBuffer<MicFrame, kMicQueueFrames> _micQueue;
   Util::FixedCircularBuffer<SpeakerFrame, kSpeakerQueueFrames> _speakerQueue;
+  Util::FixedCircularBuffer<RawMicFrame, kRawMicQueueFrames> _rawMicQueue;
   uint32_t _micSeq = 0;
   uint32_t _speakerSeq = 0;
+  uint32_t _rawMicSeq = 0;
   uint32_t _micDropped = 0;
   uint32_t _speakerDropped = 0;
+  uint32_t _rawMicDropped = 0;
 
   // Owned by the sender thread
   std::unique_ptr<LocalUdpServer> _server;
@@ -114,6 +135,8 @@ private:
   std::vector<uint8_t> _sendBuffer;
   std::vector<MicFrame> _micBatch;
   std::vector<SpeakerFrame> _speakerBatch;
+  std::vector<RawMicFrame> _rawMicBatch;
+  uint32_t _rawMicDroppedLogged = 0;
 
   std::atomic<bool> _stop{false};
   std::thread _senderThread;
