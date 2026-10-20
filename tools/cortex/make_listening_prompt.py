@@ -246,6 +246,18 @@ def dot_scale_at(t):
     return 1.0
 
 
+def clean_floats(value):
+    """4 decimals, and float noise (|x| < 1e-9) snapped to 0, so equal poses are written identically"""
+    if isinstance(value, float):
+        value = round(value, 4)
+        return 0.0 if abs(value) < 1e-9 else value
+    if isinstance(value, list):
+        return [clean_floats(v) for v in value]
+    if isinstance(value, dict):
+        return {k: clean_floats(v) for k, v in value.items()}
+    return value
+
+
 def main():
     mark = MarkRenderer()
     d0, d1 = tick(DRAW[0]), tick(DRAW[1])
@@ -264,7 +276,7 @@ def main():
         return {"Name": "SpriteBoxKeyFrame", "triggerTime_ms": t * STEP_MS, "spriteBoxName": "SpriteBox_1",
                 "layer": "Layer_6", "assetName": asset, "renderMethod": "RGBA", "spriteSeqEndType": end,
                 "alpha": 100, "xPos": SPRITE_X, "yPos": SPRITE_Y, "width": SPRITE_W, "height": SPRITE_H}
-    keyframes = face_track() + [box(d0, SEQ_IN, "Hold"), box(f0, SEQ_OUT, "Clear")]
+    keyframes = clean_floats(face_track() + [box(d0, SEQ_IN, "Hold"), box(f0, SEQ_OUT, "Clear")])
     with open(CLIP_PATH, "w") as fh:
         json.dump({CLIP_NAME: keyframes}, fh, indent=2)
         fh.write("\n")
