@@ -53,9 +53,12 @@
     "giveUpAnimName": "anim_wakeword_idk_01",
     "giveUpAfter_s": 7.0,
     "giveUpWait_s": 4.0,
-    // speech: at least minSpeech_s of voice activity within speechWindow_s, heard after the look gesture
-    "minSpeech_s": 0.3,
+    // speech: a sustained run of at least minSpeech_s of voice activity within speechWindow_s, heard after the
+    // look gesture plus settleAfterLook_s (the VAD still reports the gesture's noise, the earcon tail and its
+    // hangover right after it). The prompt and give-up times still count from the end of the look gesture
+    "minSpeech_s": 0.6,
     "speechWindow_s": 1.0,
+    "settleAfterLook_s": 1.0,
     // the stock KnowledgeGraph "looking it up" face
     "thinkingGetInAnimName": "anim_generic_look_up_01",
     "thinkingLoopAnimName": "anim_generic_look_up_idle_01",

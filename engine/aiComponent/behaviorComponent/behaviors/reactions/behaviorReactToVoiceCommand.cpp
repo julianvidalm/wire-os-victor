@@ -109,6 +109,7 @@ namespace {
   const char* kFeedbackGiveUpWaitKey               = "giveUpWait_s";
   const char* kFeedbackMinSpeechKey                = "minSpeech_s";
   const char* kFeedbackSpeechWindowKey             = "speechWindow_s";
+  const char* kFeedbackSettleAfterLookKey          = "settleAfterLook_s";
   const char* kFeedbackThinkingGetInAnimKey        = "thinkingGetInAnimName";
   const char* kFeedbackThinkingLoopAnimKey         = "thinkingLoopAnimName";
   const char* kFeedbackThinkingDelayKey            = "thinkingDelay_s";
@@ -129,21 +130,34 @@ namespace {
   // noaudio, which ends it at once) before handing the robot back
   constexpr float kDefaultFeedbackGiveUpWait_s     = 4.0f;
   // speech: at least this much voice activity (robot VAD, 10ms samples) within the speech window
-  constexpr float kDefaultFeedbackMinSpeech_s      = 0.3f;
+  // (a sustained run: the VAD's own hangover and short noises stay under it)
+  constexpr float kDefaultFeedbackMinSpeech_s      = 0.6f;
   constexpr float kDefaultFeedbackSpeechWindow_s   = 1.0f;
+  // voice activity right after the look gesture is ignored for this long: the VAD still reports the gesture's
+  // motor noise, the earcon tail and its own hangover (live: ~100% voice for 0.3s+ after every look, even silent)
+  constexpr float kDefaultFeedbackSettleAfterLook_s = 1.0f;
+  // while listening, one "vad_sample" event this often, so the levels of silent and spoken wakes can be compared
+  constexpr double kFeedbackVadSamplePeriod_s      = 1.0;
   // the stream ended without robot-heard speech: wait this long for the result before the thinking face, so a
   // quick noaudio goes straight to the give-up gesture
   constexpr float kDefaultFeedbackThinkingDelay_s  = 0.3f;
 
-  // Voice activity samples (10ms each) heard in [begin_ms, end_ms]
-  uint32_t CountVoiceSamples(const MicDirectionHistory& history, EngineTimeStamp_t begin_ms, EngineTimeStamp_t end_ms)
+  struct VoiceSamples {
+    uint32_t voice = 0; // samples (10ms) with voice activity
+    uint32_t total = 0; // all samples
+  };
+
+  // Mic samples (10ms each) heard in [begin_ms, end_ms], and how many of them had voice activity
+  VoiceSamples CountVoiceSamples(const MicDirectionHistory& history, EngineTimeStamp_t begin_ms, EngineTimeStamp_t end_ms)
   {
+    VoiceSamples result;
     if( end_ms <= begin_ms ) {
-      return 0;
+      return result;
     }
     const TimeStamp_t window_ms = TimeStamp_t(end_ms - begin_ms);
     const MicDirectionNodeList list = history.GetHistoryAtTime(end_ms, window_ms);
     double voice = 0.0;
+    double total = 0.0;
     for( const auto& node : list ) {
       double share = 1.0;
       // only the part of a node that falls inside the window
@@ -153,8 +167,11 @@ namespace {
         share = timeInNode / nodeDuration;
       }
       voice += node.vadCount * share;
+      total += node.count * share;
     }
-    return static_cast<uint32_t>(voice);
+    result.voice = static_cast<uint32_t>(voice);
+    result.total = static_cast<uint32_t>(total);
+    return result;
   }
 
   CONSOLE_VAR( bool, kRespondsToTriggerWord, CONSOLE_GROUP, true );
@@ -366,6 +383,8 @@ BehaviorReactToVoiceCommand::BehaviorReactToVoiceCommand( const Json::Value& con
     JsonTools::GetValueOptional( feedbackConfig, kFeedbackMinSpeechKey, fb.minSpeech_s );
     fb.speechWindow_s = kDefaultFeedbackSpeechWindow_s;
     JsonTools::GetValueOptional( feedbackConfig, kFeedbackSpeechWindowKey, fb.speechWindow_s );
+    fb.settleAfterLook_s = kDefaultFeedbackSettleAfterLook_s;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackSettleAfterLookKey, fb.settleAfterLook_s );
     JsonTools::GetValueOptional( feedbackConfig, kFeedbackThinkingGetInAnimKey, fb.thinkingGetInAnimName );
     JsonTools::GetValueOptional( feedbackConfig, kFeedbackThinkingLoopAnimKey, fb.thinkingLoopAnimName );
     fb.thinkingDelay_s = kDefaultFeedbackThinkingDelay_s;
@@ -1352,15 +1371,18 @@ double BehaviorReactToVoiceCommand::GetListeningTimeout() const
 namespace {
   // The Microphones log channel is off on the robot: every feedback step also goes out as a DAS event, which
   // reaches its syslog ("@behavior.voice_command.listening_feedback"), like the cortex listening reaction's
-  void LogListeningFeedback(const char* step, int value, double sinceActivation_s)
+  void LogListeningFeedback(const char* step, int value, double sinceActivation_s, int total = 0)
   {
-    LOG_INFO( "BehaviorReactToVoiceCommand.ListeningFeedback", "%s (%d) at %.2fs", step, value, sinceActivation_s );
+    LOG_INFO( "BehaviorReactToVoiceCommand.ListeningFeedback", "%s (%d/%d) at %.2fs",
+              step, value, total, sinceActivation_s );
     DASMSG( behavior_voice_command_listening_feedback, "behavior.voice_command.listening_feedback",
             "A listening feedback step after the robot's own wake word" );
-    DASMSG_SET( s1, step, "wake_turn, wake_turn_skipped, look_end, speech_heard, prompt, give_up, give_up_result, "
-                          "thinking, second_turn_skipped or eye_color_restored" );
-    DASMSG_SET( i1, value, "The wake direction (0 in front, clockwise, 12 unknown) for the turn steps, else 0" );
+    DASMSG_SET( s1, step, "wake_turn, wake_turn_skipped, look_end, speech_heard, vad_sample, prompt, give_up, "
+                          "give_up_result, thinking or eye_color_restored" );
+    DASMSG_SET( i1, value, "The wake direction (0 in front, clockwise, 12 unknown) for the turn steps; voice "
+                           "samples (10ms) in the window for speech_heard and vad_sample; else 0" );
     DASMSG_SET( i2, static_cast<int>(sinceActivation_s * 1000.0), "Milliseconds since the wake reaction started" );
+    DASMSG_SET( i3, total, "All samples (10ms) in the window for speech_heard and vad_sample, else 0" );
     DASMSG_SEND();
   }
 }
@@ -1445,6 +1467,7 @@ void BehaviorReactToVoiceCommand::OnFeedbackLookEnd()
   _dVars.feedback.phase = DynamicVariables::EFeedbackPhase::Listening;
   _dVars.feedback.lookEnd_s = BaseStationTimer::getInstance()->GetCurrentTimeInSecondsDouble();
   _dVars.feedback.lookEnd_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
+  _dVars.feedback.lastVadSample_s = _dVars.feedback.lookEnd_s;
   LogListeningFeedback( "look_end", 0, GetActivatedDuration() );
 }
 
@@ -1472,22 +1495,36 @@ void BehaviorReactToVoiceCommand::UpdateListeningFeedback()
     return;
   }
 
+  const EngineTimeStamp_t now_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
+  const MicDirectionHistory& micHistory = GetBEI().GetMicComponent().GetMicDirectionHistory();
+  const TimeStamp_t window_ms = static_cast<TimeStamp_t>( std::max(0.0f, fb.speechWindow_s) * 1000.0f );
+  const EngineTimeStamp_t windowBegin_ms = ( (TimeStamp_t)now_ms > window_ms )
+                                           ? EngineTimeStamp_t((TimeStamp_t)now_ms - window_ms) : EngineTimeStamp_t(0);
+
+  // the raw levels once a second while listening (the settle time included), to tune the rule live
+  if( now_s - dfb.lastVadSample_s >= kFeedbackVadSamplePeriod_s ) {
+    dfb.lastVadSample_s = now_s;
+    const EngineTimeStamp_t sampleBegin_ms = std::max( windowBegin_ms, dfb.lookEnd_ms );
+    const VoiceSamples levels = CountVoiceSamples( micHistory, sampleBegin_ms, now_ms );
+    LogListeningFeedback( "vad_sample", (int)levels.voice, GetActivatedDuration(), (int)levels.total );
+  }
+
   if( !dfb.speechHeard ) {
-    const EngineTimeStamp_t now_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
-    const TimeStamp_t window_ms = static_cast<TimeStamp_t>( std::max(0.0f, fb.speechWindow_s) * 1000.0f );
-    EngineTimeStamp_t begin_ms = dfb.lookEnd_ms;
-    if( ( (TimeStamp_t)now_ms > window_ms ) && ( EngineTimeStamp_t((TimeStamp_t)now_ms - window_ms) > begin_ms ) ) {
-      begin_ms = EngineTimeStamp_t((TimeStamp_t)now_ms - window_ms);
-    }
-    const MicDirectionHistory& micHistory = GetBEI().GetMicComponent().GetMicDirectionHistory();
-    const uint32_t voice = CountVoiceSamples( micHistory, begin_ms, now_ms );
-    const uint32_t minVoice = static_cast<uint32_t>( std::max(0.0f, fb.minSpeech_s) * 1000.0f /
-                                                     MicDirectionHistory::kTimePerDirectionUpdate_ms );
-    if( ( voice > 0 ) && ( voice >= minVoice ) ) {
-      // speech cancels the prompt and the give-up; the cloud ends listening from here (stream close, intent)
-      dfb.speechHeard = true;
-      LogListeningFeedback( "speech_heard", (int)voice, GetActivatedDuration() );
-      return;
+    // only voice after the settle time counts, and it must be a sustained run: at least minSpeech_s of voice
+    // within the speech window (a window still shorter than minSpeech_s cannot reach it)
+    const EngineTimeStamp_t settled_ms = EngineTimeStamp_t( (TimeStamp_t)dfb.lookEnd_ms +
+      static_cast<TimeStamp_t>( std::max(0.0f, fb.settleAfterLook_s) * 1000.0f ) );
+    if( now_ms > settled_ms ) {
+      const EngineTimeStamp_t begin_ms = std::max( windowBegin_ms, settled_ms );
+      const VoiceSamples samples = CountVoiceSamples( micHistory, begin_ms, now_ms );
+      const uint32_t minVoice = static_cast<uint32_t>( std::max(0.0f, fb.minSpeech_s) * 1000.0f /
+                                                       MicDirectionHistory::kTimePerDirectionUpdate_ms );
+      if( ( samples.voice > 0 ) && ( samples.voice >= minVoice ) ) {
+        // speech cancels the prompt and the give-up; the cloud ends listening from here (stream close, intent)
+        dfb.speechHeard = true;
+        LogListeningFeedback( "speech_heard", (int)samples.voice, GetActivatedDuration(), (int)samples.total );
+        return;
+      }
     }
   }
 

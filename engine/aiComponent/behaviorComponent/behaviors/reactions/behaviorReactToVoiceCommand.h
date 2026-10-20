@@ -224,6 +224,7 @@ private:
       float giveUpWait_s = 0.0f;
       float minSpeech_s = 0.0f;
       float speechWindow_s = 0.0f;
+      float settleAfterLook_s = 0.0f;
       std::string thinkingGetInAnimName;
       std::string thinkingLoopAnimName;
       float thinkingDelay_s = 0.0f;
@@ -272,6 +273,7 @@ private:
       bool              resultAfterGiveUp = false;
       double            giveUpEnd_s = 0.0;
       double            streamEndSeen_s = 0.0;
+      double            lastVadSample_s = 0.0;
     } feedback;
     
     struct Persistent {
