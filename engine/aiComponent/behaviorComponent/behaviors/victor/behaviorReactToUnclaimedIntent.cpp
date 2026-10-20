@@ -19,6 +19,8 @@
 #include "engine/aiComponent/behaviorComponent/behaviorExternalInterface/beiRobotInfo.h"
 #include "util/cladHelpers/cladFromJSONHelpers.h"
 
+#include "coretech/common/engine/utils/timer.h"
+#include "util/logging/DAS.h"
 #include "util/logging/logging.h"
 
 namespace Anki {
@@ -56,6 +58,16 @@ void BehaviorReactToUnclaimedIntent::OnBehaviorActivated()
 {
   auto& uic = GetBehaviorComp<UserIntentComponent>();
   uic.ResetUserIntentUnclaimed();
+
+  // which intent this "can't do that" is for (it may have been dropped a while ago, e.g. during a feature)
+  const float sinceDrop_s = BaseStationTimer::getInstance()->GetCurrentTimeInSeconds() -
+                            uic.GetLastUnclaimedIntentTime_s();
+  DASMSG( unclaimed_intent_reaction, "behavior.unclaimed_intent.reaction",
+          "Reacting to a user intent that no behavior claimed" );
+  DASMSG_SET( s1, uic.GetLastUnclaimedIntentName().c_str(), "The intent that was dropped" );
+  DASMSG_SET( s2, uic.GetLastUnclaimedIntentSource().c_str(), "Its source (e.g. Voice, App)" );
+  DASMSG_SET( i1, static_cast<int>(sinceDrop_s * 1000.0f), "Milliseconds since it was dropped" );
+  DASMSG_SEND();
 
   const auto& robotInfo = GetBEI().GetRobotInfo();
 

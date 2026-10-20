@@ -965,11 +965,12 @@ void BehaviorReactToVoiceCommand::OnVictorListeningEnd()
     blc.StopLoopingBackpackAnimation( _dVars.lightsHandle );
   }
 
-  // play our "earcon end" audio, which depends on if our intent was successfully heard or not
+  // play our "earcon end" audio, which depends on if our intent was successfully heard or not. The "understood"
+  // chime is off by default (UserIntentComponent::PlaysVoiceRequestSuccessEarcon); "didn't understand" plays
   BehaviorExternalInterface& bei = GetBEI();
   if ( EIntentStatus::IntentHeard == _dVars.intentStatus )
   {
-    if ( GenericEvent::Invalid != _iVars.earConSuccess )
+    if ( ( GenericEvent::Invalid != _iVars.earConSuccess ) && UserIntentComponent::PlaysVoiceRequestSuccessEarcon() )
     {
       // Play earcon end audio
       bei.GetRobotAudioClient().PostEvent( _iVars.earConSuccess, AudioMetaData::GameObjectType::Behavior );

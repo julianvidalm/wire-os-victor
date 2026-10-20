@@ -227,6 +227,17 @@ public:
   bool WasUserIntentUnclaimed() const { return _wasIntentUnclaimed; };
   void ResetUserIntentUnclaimed() { _wasIntentUnclaimed = false; };
 
+  // v3ctor voice request feedback, off by default (console group VoiceRequest): the backpack lights ("working
+  // on it" while the answer comes, kVoiceRequestLights) and the "understood" chime (Wake_Word_Success, also the
+  // knowledge graph's end chime, kVoiceRequestSuccessEarcon). The "didn't understand" chime (Wake_Word_Fail)
+  // always plays. The wake chime (Wake_Word_On) is vic-anim's (VoiceRequest kVoiceRequestWakeEarcon)
+  static bool ShowsVoiceRequestLights();
+  static bool PlaysVoiceRequestSuccessEarcon();
+  // the intent that last went unclaimed (force cleared), its source, and the engine time it was dropped
+  const std::string& GetLastUnclaimedIntentName() const { return _lastUnclaimedIntentName; }
+  const std::string& GetLastUnclaimedIntentSource() const { return _lastUnclaimedIntentSource; }
+  float GetLastUnclaimedIntentTime_s() const { return _lastUnclaimedIntentTime_s; }
+
   // returns true if there has been an error receiving data from the cloud (e.g. no internet, couldn't reach
   // chipper). Must be manually reset with the reset call below
   bool WasUserIntentError() const { return _wasIntentError; };
@@ -372,6 +383,9 @@ private:
   std::unique_ptr<BehaviorComponentCloudServer> _server;
   
   bool _wasIntentUnclaimed = false;
+  std::string _lastUnclaimedIntentName;
+  std::string _lastUnclaimedIntentSource;
+  float _lastUnclaimedIntentTime_s = 0.0f;
   bool _wasIntentError = false;
   bool _isStreamOpen = false;
   

@@ -585,7 +585,7 @@ namespace Anki
       using namespace AudioMetaData::GameEvent;
       BehaviorExternalInterface &bei = GetBEI();
 
-      if (GenericEvent::Invalid != _iVars.earConEnd)
+      if ((GenericEvent::Invalid != _iVars.earConEnd) && UserIntentComponent::PlaysVoiceRequestSuccessEarcon())
       {
         // Play earcon end audio
         bei.GetRobotAudioClient().PostEvent(_iVars.earConEnd, AudioMetaData::GameObjectType::Behavior);
