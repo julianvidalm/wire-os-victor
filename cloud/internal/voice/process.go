@@ -29,8 +29,10 @@ const (
 	SampleRate = 16000
 	// SampleBits defines how many bits each sample should contain
 	SampleBits = 16
-	// DefaultTimeout is the length of time before the process will cancel a voice request
-	DefaultTimeout = 9 * time.Second
+	// DefaultTimeout is the length of time before the process will cancel a voice request: the robot's mic
+	// stream cap (MicData::kStreamingTimeout_ms, 14s) plus the PC cortex's answer time (whisper and the LLM,
+	// ~4-5s). The engine waits longer (kMaxStreamingDuration_s, 20s from the stream opening)
+	DefaultTimeout = 20 * time.Second
 )
 
 // Process contains the data associated with an instance of the cloud process,

@@ -34,7 +34,10 @@ namespace MicData {
   static constexpr uint32_t kTriggerLessOverlapSize_ms      = 0;
   static constexpr uint32_t kTriggerAudioLengthDebug_ms     = 1500; // We only hold onto more audio for FP testing during development
   static constexpr uint32_t kTriggerAudioLengthShipping_ms  = 750;
-  static constexpr uint32_t kStreamingTimeout_ms            = 6000 + kTriggerOverlapSize_ms;
+  // the robot's mic stream cap after the wake (the cloud normally ends the stream sooner, at the end of speech).
+  // 14s: the listening feedback gives up ~9s after the wake (7s after the look gesture, which ends ~1.5-2s
+  // after the wake), and a user who starts talking just before that still has ~5s to speak
+  static constexpr uint32_t kStreamingTimeout_ms            = 14000 + kTriggerOverlapSize_ms;
   static constexpr uint32_t kStreamingDefaultMinDuration_ms = 4000;
   static constexpr uint32_t kRawAudioPerBuffer_ms           = 1000;
 

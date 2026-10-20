@@ -55,7 +55,7 @@ namespace {
   const char* kVocalResponseToBadIntentKey        = "vocalResponseToBadIntentKey";
   const char* kVocalRepromptKey                   = "vocalRepromptKey";
 
-  constexpr float kMaxRecordTime_s                = 10.0f; // matches timeouts for TriggerWord and KnowledgeGraph
+  constexpr float kMaxRecordTime_s                = 17.0f; // the mic stream cap (14s) plus ~3s for the cloud to respond
 
   static_assert( kMaxRecordTime_s >= ( ( MicData::kStreamingTimeout_ms + 2000 ) / 1000.f ),
                  "kMaxRecordTime_s should be >= kStreamingTimeout_ms by about 2 seconds to give chipper time to respond" );
