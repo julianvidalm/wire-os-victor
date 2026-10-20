@@ -57,7 +57,9 @@ func runMicTap(process *voice.Process) {
 
 	log.Println("mictap: forwarding to", config.Env.Chipper)
 	mictap.New(mictap.Config{
-		Dial: mictap.NewSessionDialerWithStatus(conn, esn, func(cmd *mictappb.Command) {
+		// a new or closed Session cancels whatever vic-anim plays, so a stream cut off by a vic-cloud restart
+		// or a lost Session never blocks the next one
+		Dial: mictap.ResetOnSession(mictap.NewSessionDialerWithStatus(conn, esn, func(cmd *mictappb.Command) {
 			if a := cmd.GetAudio(); a != nil {
 				listenEngineAudioStatus(audio)
 				audio.Handle(a)
@@ -80,7 +82,7 @@ func runMicTap(process *voice.Process) {
 			}
 			logf("mictap: cortex command %s", result.Intent)
 			process.InjectResult(result)
-		}, &reports, logf),
+		}, &reports, logf), audio),
 		Logf: logf,
 	}).Run(context.Background(), queue)
 }

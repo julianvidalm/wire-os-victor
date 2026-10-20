@@ -1,6 +1,7 @@
 package mictap
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -101,7 +102,7 @@ func TestAudioStreamReachesTheEngineAndReportsItsEnd(t *testing.T) {
 	p.Handle(chunk(7, 1024))
 	p.Handle(chunk(7, 512))
 	p.Handle(complete(7))
-	want := []string{"prepare 16000 80", "chunk 1024", "chunk 512", "complete"}
+	want := []string{"cancel", "prepare 16000 80", "chunk 1024", "chunk 512", "complete"}
 	waitFor(t, "engine calls", func() bool { return len(e.snapshot()) == len(want) })
 	if got := e.snapshot(); !equal(got, want) {
 		t.Fatalf("engine calls %v, want %v", got, want)
@@ -127,7 +128,7 @@ func TestAudioPrepareDefaultsAndLimits(t *testing.T) {
 	p.Handle(prepare(2, 16000, 250)) // replaces stream 1, volume capped
 	p.Handle(prepare(3, 44100, 50))  // rate out of range: never reaches the engine
 	waitFor(t, "status", func() bool { return len(st.snapshot()) == 4 })
-	if got, want := e.snapshot(), []string{"prepare 16000 100", "cancel", "prepare 16000 100"}; !equal(got, want) {
+	if got, want := e.snapshot(), []string{"cancel", "prepare 16000 100", "cancel", "prepare 16000 100"}; !equal(got, want) {
 		t.Fatalf("engine calls %v, want %v", got, want)
 	}
 	if got, want := st.snapshot(), []string{"1 STARTED", "1 CANCELLED", "2 STARTED", "3 FAILED"}; !equal(got, want) {
@@ -148,7 +149,7 @@ func TestAudioStepsOfOtherStreamsAreIgnored(t *testing.T) {
 	p.Handle(chunk(6, 100))  // after the failure
 	waitFor(t, "status", func() bool { return len(st.snapshot()) == 2 })
 	time.Sleep(20 * time.Millisecond)
-	if got, want := e.snapshot(), []string{"prepare 16000 100", "cancel"}; !equal(got, want) {
+	if got, want := e.snapshot(), []string{"cancel", "prepare 16000 100", "cancel"}; !equal(got, want) {
 		t.Fatalf("engine calls %v, want %v", got, want)
 	}
 	if got, want := st.snapshot(), []string{"6 STARTED", "6 FAILED"}; !equal(got, want) {
@@ -166,7 +167,7 @@ func TestAudioCancelStopsTheStream(t *testing.T) {
 	p.Handle(chunk(9, 1024))
 	waitFor(t, "status", func() bool { return len(st.snapshot()) == 2 })
 	time.Sleep(20 * time.Millisecond)
-	if got, want := e.snapshot(), []string{"prepare 16000 100", "chunk 1024", "cancel"}; !equal(got, want) {
+	if got, want := e.snapshot(), []string{"cancel", "prepare 16000 100", "chunk 1024", "cancel"}; !equal(got, want) {
 		t.Fatalf("engine calls %v, want %v", got, want)
 	}
 	if got, want := st.snapshot(), []string{"9 STARTED", "9 CANCELLED"}; !equal(got, want) {
@@ -195,10 +196,10 @@ func TestAudioNeverBlocksTheSessionAndCancelsOnOverflow(t *testing.T) {
 	})
 	time.Sleep(20 * time.Millisecond)
 	calls := e.snapshot()
-	if len(calls) < 2 || calls[0] != "prepare 16000 100" || calls[len(calls)-1] != "cancel" {
+	if len(calls) < 3 || calls[1] != "prepare 16000 100" || calls[len(calls)-1] != "cancel" {
 		t.Fatalf("engine calls %v", calls)
 	}
-	if len(calls) > 2+4+1 { // prepare, at most the queued chunks, cancel
+	if len(calls) > 3+4+1 { // cancel, prepare, at most the queued chunks, cancel
 		t.Fatalf("%d engine calls after an overflow", len(calls))
 	}
 	// the next stream plays normally
@@ -224,7 +225,61 @@ func TestAudioEngineOverflowAndFailureAreReported(t *testing.T) {
 	if got, want := st.snapshot(), []string{"1 STARTED", "1 OVERFLOW", "2 STARTED", "2 FAILED"}; !equal(got, want) {
 		t.Fatalf("status %v, want %v", got, want)
 	}
-	if got, want := e.snapshot(), []string{"prepare 16000 100", "prepare 16000 100"}; !equal(got, want) {
+	if got, want := e.snapshot(), []string{"cancel", "prepare 16000 100", "cancel", "prepare 16000 100"}; !equal(got, want) {
+		t.Fatalf("engine calls %v, want %v", got, want)
+	}
+}
+
+func TestAudioPrepareAlwaysCancelsFirst(t *testing.T) {
+	// vic-anim may still hold a stream vic-cloud does not know about (vic-cloud restarted mid-stream): every
+	// prepare is preceded by a cancel so it never fails with "Already playing audio"
+	e := &fakeEngine{}
+	p := NewAudioPlayer(e, 0, nil, t.Logf)
+	p.Handle(prepare(1, 16000, 100))
+	waitFor(t, "engine calls", func() bool { return len(e.snapshot()) == 2 })
+	if got, want := e.snapshot(), []string{"cancel", "prepare 16000 100"}; !equal(got, want) {
+		t.Fatalf("engine calls %v, want %v", got, want)
+	}
+}
+
+func TestAudioResetCancelsTheStream(t *testing.T) {
+	e := &fakeEngine{}
+	var st statusLog
+	p := NewAudioPlayer(e, 0, st.add, t.Logf)
+	p.Reset() // a session starts: whatever vic-anim holds is cancelled
+	waitFor(t, "reset cancel", func() bool { return len(e.snapshot()) == 1 })
+	p.Handle(prepare(2, 16000, 100))
+	p.Handle(chunk(2, 1024))
+	waitFor(t, "stream", func() bool { return len(e.snapshot()) == 4 })
+	p.Reset()                // the session closes mid-stream
+	p.Handle(chunk(2, 1024)) // a late chunk of the old stream is ignored
+	waitFor(t, "status", func() bool { return len(st.snapshot()) == 2 })
+	time.Sleep(20 * time.Millisecond)
+	if got, want := e.snapshot(), []string{"cancel", "cancel", "prepare 16000 100", "chunk 1024", "cancel"}; !equal(got, want) {
+		t.Fatalf("engine calls %v, want %v", got, want)
+	}
+	if got, want := st.snapshot(), []string{"2 STARTED", "2 CANCELLED"}; !equal(got, want) {
+		t.Fatalf("status %v, want %v", got, want)
+	}
+}
+
+type nopStream struct{}
+
+func (nopStream) Send([]byte) error   { return nil }
+func (nopStream) CloseAndRecv() error { return nil }
+
+func TestResetOnSessionCancelsAtStartAndClose(t *testing.T) {
+	e := &fakeEngine{}
+	p := NewAudioPlayer(e, 0, nil, t.Logf)
+	dial := ResetOnSession(func(context.Context) (Stream, error) { return nopStream{}, nil }, p)
+	s, err := dial(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "cancel at start", func() bool { return len(e.snapshot()) == 1 })
+	s.CloseAndRecv()
+	waitFor(t, "cancel at close", func() bool { return len(e.snapshot()) == 2 })
+	if got, want := e.snapshot(), []string{"cancel", "cancel"}; !equal(got, want) {
 		t.Fatalf("engine calls %v, want %v", got, want)
 	}
 }

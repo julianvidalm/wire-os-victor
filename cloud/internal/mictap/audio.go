@@ -1,6 +1,7 @@
 package mictap
 
 import (
+	"context"
 	"errors"
 	"sync"
 
@@ -52,6 +53,7 @@ type AudioPlayer struct {
 	current   uint32 // stream playing (prepared on the engine), 0 if none
 	dropped   uint32 // stream dropped after an overflow; its remaining steps are ignored
 	cancelFor uint32 // stream the sender must cancel because of an overflow, 0 if none
+	reset     bool   // the sender must cancel whatever vic-anim plays (a Session started or closed)
 }
 
 // NewAudioPlayer starts the sender goroutines. report may be nil (no status upstream).
@@ -106,6 +108,18 @@ func (p *AudioPlayer) overflow(id uint32) {
 	}
 }
 
+// Reset cancels whatever stream vic-anim may hold, known or not: called when a Session starts or closes, so a
+// stream cut off by a vic-cloud restart or a lost Session never leaves vic-anim "already playing". Never blocks.
+func (p *AudioPlayer) Reset() {
+	p.mu.Lock()
+	p.reset = true
+	p.mu.Unlock()
+	select {
+	case p.wake <- struct{}{}:
+	default:
+	}
+}
+
 // EngineStatus records what the engine reported about the playing stream and passes it upstream.
 func (p *AudioPlayer) EngineStatus(state EngineAudioState) {
 	p.mu.Lock()
@@ -146,12 +160,39 @@ func (p *AudioPlayer) send() {
 	for {
 		select {
 		case <-p.wake:
+			p.resetIfAsked()
 			p.cancelOverflowed()
 		case a := <-p.queue:
-			// an overflow seen while this step waited is handled before it
+			// a reset or an overflow seen while this step waited is handled before it
+			p.resetIfAsked()
 			p.cancelOverflowed()
 			p.step(a)
 		}
+	}
+}
+
+func (p *AudioPlayer) resetIfAsked() {
+	p.mu.Lock()
+	asked := p.reset
+	p.reset = false
+	id := p.current
+	if asked {
+		p.current = 0
+		if id != 0 {
+			// the rest of that stream, already queued or still arriving, is ignored
+			p.dropped = id
+		}
+	}
+	p.mu.Unlock()
+	if !asked {
+		return
+	}
+	if err := p.engine.Cancel(); err != nil {
+		p.logf("mictap: cannot cancel audio on session change: %v", err)
+	}
+	if id != 0 {
+		p.logf("mictap: audio stream %d cancelled: session changed", id)
+		p.status(id, pb.AudioStatus_CANCELLED)
 	}
 }
 
@@ -194,12 +235,14 @@ func (p *AudioPlayer) step(a *pb.Audio) {
 			p.status(id, pb.AudioStatus_FAILED)
 			return
 		}
+		// one stream at a time: always cancel first, even with no known stream, because vic-anim may still hold
+		// one vic-cloud never saw end (a restart mid-stream) and would refuse the prepare ("Already playing
+		// audio"). With nothing prepared, vic-anim's cancel only logs a failed ANKI_VERIFY
+		if err := p.engine.Cancel(); err != nil {
+			p.logf("mictap: cannot cancel before audio stream %d: %v", id, err)
+		}
 		if current != 0 {
-			// one stream at a time: a new answer replaces the one playing
 			p.logf("mictap: audio stream %d replaced by %d", current, id)
-			if err := p.engine.Cancel(); err != nil {
-				p.logf("mictap: cannot cancel audio stream %d: %v", current, err)
-			}
 			p.setCurrent(0)
 			p.status(current, pb.AudioStatus_CANCELLED)
 		}
@@ -272,4 +315,27 @@ func prepareParams(prep *pb.AudioPrepare) (rate, volume uint32, err error) {
 		volume = 100
 	}
 	return rate, volume, nil
+}
+
+// ResetOnSession wraps dial so the player is reset when each upload (a Session) starts and when it closes.
+func ResetOnSession(dial Dialer, p *AudioPlayer) Dialer {
+	return func(ctx context.Context) (Stream, error) {
+		s, err := dial(ctx)
+		if err != nil {
+			return nil, err
+		}
+		p.Reset()
+		return &resetStream{Stream: s, p: p}, nil
+	}
+}
+
+type resetStream struct {
+	Stream
+	p *AudioPlayer
+}
+
+func (r *resetStream) CloseAndRecv() error {
+	err := r.Stream.CloseAndRecv()
+	r.p.Reset()
+	return err
 }
