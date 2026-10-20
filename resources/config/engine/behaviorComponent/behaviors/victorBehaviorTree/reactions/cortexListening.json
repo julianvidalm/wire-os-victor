@@ -1,0 +1,18 @@
+{
+  // Silent listening face while the PC cortex captures speech after its wake word. Holds the eye pose until
+  // the next user intent (the answer, left pending for its own behavior), cortex_listening_end, or the
+  // timeout. Deliberately no postBehaviorSuggestion: HighLevelAI resumes its previous state.
+  "behaviorID": "CortexListening",
+  "behaviorClass": "CortexListening",
+
+  "associatedActiveFeature": "BasicVoiceCommand",
+
+  "respondToUserIntents": [
+    { "type": "cortex_listening" },
+    { "type": "cortex_listening_end" }
+  ],
+  "showActiveIntentFeedback": false,
+
+  "animName": "anim_eyepose_curious",
+  "timeout_s": 10.0
+}

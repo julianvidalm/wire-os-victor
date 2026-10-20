@@ -200,6 +200,7 @@ enum uint_8 BehaviorClass {
   // reactions
   AskForHelp,
   CheckForAndReactToSalientPoint,
+  CortexListening,
   ReactToCliff,
   ReactToCubeTap,
   ReactToDarkness,

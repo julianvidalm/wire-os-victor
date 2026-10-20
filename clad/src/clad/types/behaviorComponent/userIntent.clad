@@ -128,6 +128,8 @@ union dupes_allowed UserIntent
   UserIntent_Void             blackjack_playagain,
   UserIntent_Void             character_age,
   UserIntent_Void             check_timer,
+  UserIntent_Void             cortex_listening,
+  UserIntent_Void             cortex_listening_end,
   UserIntent_EyeColor         imperative_eyecolor_specific,
   UserIntent_Void             imperative_eyecolor,
   UserIntent_Void             explore_start,
