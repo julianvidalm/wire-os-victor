@@ -63,3 +63,39 @@ func TestEmptyCommandIsRejected(t *testing.T) {
 		t.Fatal("accepted an intent result without an intent")
 	}
 }
+
+func TestKnowledgeWithoutExternalVoiceKeepsTheRobotVoice(t *testing.T) {
+	p := knowledgeParams(t, "Hola.")
+	if _, ok := p["external_voice"]; ok {
+		t.Fatalf("params %v carry external_voice", p)
+	}
+	if _, ok := p["expected_duration_ms"]; ok {
+		t.Fatalf("params %v carry expected_duration_ms", p)
+	}
+}
+
+func TestKnowledgeWithExternalVoiceTellsTheEngine(t *testing.T) {
+	r, err := CommandToIntent(&pb.Command{Command: &pb.Command_Knowledge{Knowledge: &pb.KnowledgeResponse{
+		Answer: "Son las tres.", QueryText: "qué hora es", ExternalVoice: true, ExpectedDurationMs: 2300}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p struct {
+		Answer             string `json:"answer"`
+		ExternalVoice      bool   `json:"external_voice"`
+		ExpectedDurationMs uint32 `json:"expected_duration_ms"`
+	}
+	if err := json.Unmarshal([]byte(r.Parameters), &p); err != nil {
+		t.Fatal(err)
+	}
+	if r.Intent != "intent_knowledge_response_extend_bypass" || p.Answer != "Son las tres." || !p.ExternalVoice ||
+		p.ExpectedDurationMs != 2300 {
+		t.Fatalf("intent %q params %s", r.Intent, r.Parameters)
+	}
+}
+
+func TestAudioCommandIsNotAnIntent(t *testing.T) {
+	if _, err := CommandToIntent(&pb.Command{Command: &pb.Command_Audio{Audio: &pb.Audio{StreamId: 1}}}); err == nil {
+		t.Fatal("audio became an intent")
+	}
+}

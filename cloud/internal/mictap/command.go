@@ -32,15 +32,23 @@ func CommandToIntent(cmd *pb.Command) (*cloud.IntentResult, error) {
 			Metadata:   c.IntentResult.GetMetadata(),
 		}, nil
 	case *pb.Command_Knowledge:
-		params, err := json.Marshal(map[string]string{
+		fields := map[string]any{
 			"answer":      shorten(c.Knowledge.GetAnswer(), maxAnswerBytes),
 			"answer_type": "VOICE_COMMAND",
 			"query_text":  c.Knowledge.GetQueryText(),
-		})
+		}
+		if c.Knowledge.GetExternalVoice() {
+			// the cortex streams the spoken answer (Command.audio); the engine only shows the talking face
+			fields["external_voice"] = true
+			fields["expected_duration_ms"] = c.Knowledge.GetExpectedDurationMs()
+		}
+		params, err := json.Marshal(fields)
 		if err != nil {
 			return nil, err
 		}
 		return &cloud.IntentResult{Intent: knowledgeBypassIntent, Parameters: string(params)}, nil
+	case *pb.Command_Audio:
+		return nil, errors.New("audio is not an intent")
 	default:
 		return nil, errors.New("empty command")
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 
 	pb "github.com/digital-dream-labs/vector-cloud/internal/proto/mictap"
@@ -47,6 +48,13 @@ func (g *grpcStream) CloseAndRecv() error {
 // Unimplemented), it switches to Stream for good: audio still flows, only commands are unavailable.
 func NewSessionDialer(conn grpc.ClientConnInterface, esn string, onCommand func(*pb.Command),
 	logf func(format string, a ...any)) Dialer {
+	return NewSessionDialerWithStatus(conn, esn, onCommand, nil, logf)
+}
+
+// NewSessionDialerWithStatus is NewSessionDialer that also lets status (if not nil) send audio status reports
+// upstream on whichever Session is open.
+func NewSessionDialerWithStatus(conn grpc.ClientConnInterface, esn string, onCommand func(*pb.Command),
+	reports *StatusSender, logf func(format string, a ...any)) Dialer {
 	client := pb.NewMicTapClient(conn)
 	stream := NewGRPCDialer(conn, esn)
 	var unsupported atomic.Bool
@@ -60,8 +68,14 @@ func NewSessionDialer(conn grpc.ClientConnInterface, esn string, onCommand func(
 			return nil, err
 		}
 		gs := &grpcSession{s: s, done: make(chan struct{})}
+		if reports != nil {
+			reports.set(gs)
+		}
 		go func() {
 			defer close(gs.done)
+			if reports != nil {
+				defer reports.clear(gs)
+			}
 			for {
 				cmd, err := s.Recv()
 				if err != nil {
@@ -84,10 +98,54 @@ type grpcSession struct {
 	s    pb.MicTap_SessionClient
 	done chan struct{}
 	err  error // set before done is closed
+
+	sendMu sync.Mutex // gRPC allows one sender at a time: the forwarder and the audio status reports
 }
 
 func (g *grpcSession) Send(chunk []byte) error {
+	g.sendMu.Lock()
+	defer g.sendMu.Unlock()
 	return g.s.Send(&pb.Chunk{Data: chunk})
+}
+
+func (g *grpcSession) sendStatus(st *pb.AudioStatus) error {
+	g.sendMu.Lock()
+	defer g.sendMu.Unlock()
+	return g.s.Send(&pb.Chunk{AudioStatus: st})
+}
+
+// ErrNoSession means there is no Session open to report on.
+var ErrNoSession = errors.New("no MicTap session open")
+
+// StatusSender sends audio status reports on the Session that is open, if any.
+type StatusSender struct {
+	mu  sync.Mutex
+	cur *grpcSession
+}
+
+// Send reports st upstream. It fails with ErrNoSession when no Session is open (the report is lost).
+func (s *StatusSender) Send(st *pb.AudioStatus) error {
+	s.mu.Lock()
+	gs := s.cur
+	s.mu.Unlock()
+	if gs == nil {
+		return ErrNoSession
+	}
+	return gs.sendStatus(st)
+}
+
+func (s *StatusSender) set(gs *grpcSession) {
+	s.mu.Lock()
+	s.cur = gs
+	s.mu.Unlock()
+}
+
+func (s *StatusSender) clear(gs *grpcSession) {
+	s.mu.Lock()
+	if s.cur == gs {
+		s.cur = nil
+	}
+	s.mu.Unlock()
 }
 
 // CloseAndRecv ends the upload and waits for the cortex to close the call, returning its status.

@@ -46,9 +46,23 @@ func runMicTap(process *voice.Process) {
 	logf := func(format string, a ...any) { log.Printf(format+"\n", a...) }
 	go mictap.RunSource(context.Background(), open, 5*time.Second, queue, &queueDropped, logf)
 
+	// The cortex's own voice: Command.audio steps go to the engine's external audio stream, never blocking the
+	// Session's receive loop; what happened to each stream goes back upstream on the same Session.
+	var reports mictap.StatusSender
+	audio := mictap.NewAudioPlayer(engineAudio{}, mictap.DefaultAudioQueueLen, func(st *mictappb.AudioStatus) {
+		if err := reports.Send(st); err != nil {
+			logf("mictap: audio status %d %s not reported: %v", st.GetStreamId(), st.GetState(), err)
+		}
+	}, logf)
+
 	log.Println("mictap: forwarding to", config.Env.Chipper)
 	mictap.New(mictap.Config{
-		Dial: mictap.NewSessionDialer(conn, esn, func(cmd *mictappb.Command) {
+		Dial: mictap.NewSessionDialerWithStatus(conn, esn, func(cmd *mictappb.Command) {
+			if a := cmd.GetAudio(); a != nil {
+				listenEngineAudioStatus(audio)
+				audio.Handle(a)
+				return
+			}
 			// The cortex heard Vector's name: wake up as if "Hey Vector" was heard. The robot's voice request
 			// that follows is answered by the cortex with the sentence it already transcribed.
 			if cmd.GetWake() != nil {
@@ -66,7 +80,7 @@ func runMicTap(process *voice.Process) {
 			}
 			logf("mictap: cortex command %s", result.Intent)
 			process.InjectResult(result)
-		}, logf),
+		}, &reports, logf),
 		Logf: logf,
 	}).Run(context.Background(), queue)
 }

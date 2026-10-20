@@ -19,8 +19,9 @@ import (
 // command once audio arrived.
 type sessionServer struct {
 	pb.UnimplementedMicTapServer
-	mu    sync.Mutex
-	bytes []byte
+	mu       sync.Mutex
+	bytes    []byte
+	statuses []*pb.AudioStatus
 }
 
 func (s *sessionServer) Session(stream pb.MicTap_SessionServer) error {
@@ -35,6 +36,9 @@ func (s *sessionServer) Session(stream pb.MicTap_SessionServer) error {
 		}
 		s.mu.Lock()
 		s.bytes = append(s.bytes, chunk.GetData()...)
+		if chunk.GetAudioStatus() != nil {
+			s.statuses = append(s.statuses, chunk.GetAudioStatus())
+		}
 		s.mu.Unlock()
 		if !answered {
 			answered = true
@@ -135,5 +139,38 @@ func TestSessionDialerFallsBackToStreamOnAnOlderServer(t *testing.T) {
 			t.Fatal("audio never reached the Stream-only server")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestStatusSenderReportsOnTheOpenSession(t *testing.T) {
+	srv := &sessionServer{}
+	conn := dialBufconn(t, func(g *grpc.Server) { pb.RegisterMicTapServer(g, srv) })
+	var reports StatusSender
+	st := &pb.AudioStatus{StreamId: 4, State: pb.AudioStatus_COMPLETED}
+	if err := reports.Send(st); err != ErrNoSession {
+		t.Fatalf("send without a session: %v", err)
+	}
+	dial := NewSessionDialerWithStatus(conn, "0dd1b652", func(*pb.Command) {}, &reports, t.Logf)
+	s, err := dial(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// audio and reports share the call
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); s.Send(hello1) }()
+	go func() { defer wg.Done(); reports.Send(st) }()
+	wg.Wait()
+	if err := s.CloseAndRecv(); err != nil {
+		t.Fatal(err)
+	}
+	srv.mu.Lock()
+	if !bytes.Equal(srv.bytes, hello1) || len(srv.statuses) != 1 || srv.statuses[0].GetStreamId() != 4 ||
+		srv.statuses[0].GetState() != pb.AudioStatus_COMPLETED {
+		t.Fatalf("server got %v and %v", srv.bytes, srv.statuses)
+	}
+	srv.mu.Unlock()
+	if err := reports.Send(st); err != ErrNoSession {
+		t.Fatalf("send after the session ended: %v", err)
 	}
 }
