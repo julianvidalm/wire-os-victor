@@ -33,6 +33,10 @@
       "user_intent": "cortex_listening_prompt"
     },
     {
+      "cloud_intent": "intent_cortex_thinking",
+      "user_intent": "cortex_thinking"
+    },
+    {
       "cloud_intent": "intent_amazon_signin",
       "user_intent": "amazon_signin"
     },

@@ -15,7 +15,8 @@
   "respondToUserIntents": [
     { "type": "cortex_listening" },
     { "type": "cortex_listening_end" },
-    { "type": "cortex_listening_prompt" }
+    { "type": "cortex_listening_prompt" },
+    { "type": "cortex_thinking" }
   ],
   "showActiveIntentFeedback": false,
 
@@ -38,5 +39,12 @@
 
   "animName": "anim_eyepose_curious",
   // safety net only: the PC ends listening (prompt ~6 s after the wake, give-up ~9 s)
-  "timeout_s": 15.0
+  "timeout_s": 15.0,
+
+  // cortex_thinking (the user's speech ended, the answer is on its way): the user's eye color again and the
+  // stock "looking it up" face (the KnowledgeGraph searching clips), held until the answer, cortex_listening_end
+  // (the give-up gesture) or this safety timeout (the LLM can take a while)
+  "thinkingGetInAnimName": "anim_generic_look_up_01",
+  "thinkingLoopAnimName": "anim_generic_look_up_idle_01",
+  "thinkingTimeout_s": 20.0
 }

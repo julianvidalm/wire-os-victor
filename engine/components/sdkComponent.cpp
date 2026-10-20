@@ -786,6 +786,17 @@ void SDKComponent::HandleAudioStreamCompleteRequest(const AnkiEvent<external_int
   }
 }
 
+void SDKComponent::CancelExternalAudio()
+{
+  if (_robot == nullptr) {
+    return;
+  }
+  const Result result = _robot->SendMessage(RobotInterface::EngineToRobot(RobotInterface::ExternalAudioCancel()));
+  if (RESULT_OK != result) {
+    LOG_ERROR("SDKComponent.CancelExternalAudio", "Send Audio Stream Cancel Message to Robot failed");
+  }
+}
+
 void SDKComponent::HandleAudioStreamCancelRequest(const AnkiEvent<external_interface::GatewayWrapper>& event)
 {
   RobotInterface::ExternalAudioCancel msg;

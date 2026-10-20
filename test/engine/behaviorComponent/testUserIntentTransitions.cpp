@@ -116,6 +116,24 @@ TEST_INTENT(UserIntentsTransitions, CortexListeningEnd, "cortex_listening_end")
   EXPECT_FALSE( uic.WasUserIntentUnclaimed() );
 }
 
+TEST_INTENT(UserIntentsTransitions, CortexThinking, "cortex_thinking")
+{
+  // with nothing listening, CortexListening still claims it (and ends at once), so it is never unclaimed.
+  // See testBehaviorCortexListening.cpp for the full behavior
+  TestBehaviorFramework tbf;
+  tbf.InitializeStandardBehaviorComponent();
+  tbf.SetBehaviorStackByName( "highLevelAI_stack" );
+  auto& uic = tbf.GetBehaviorComponent().GetComponent<UserIntentComponent>();
+  uic.DevSetUserIntentPending( USER_INTENT(cortex_thinking), UserIntentSource::Voice );
+  AICompMap emptyMap;
+  for( int i=0; i<3; ++i ) {
+    tbf.GetBehaviorComponent().UpdateDependent(emptyMap);
+    IncrementBaseStationTimerTicks();
+  }
+  EXPECT_FALSE( uic.IsAnyUserIntentPending() );
+  EXPECT_FALSE( uic.WasUserIntentUnclaimed() );
+}
+
 TEST_INTENT(UserIntentsTransitions, CortexListeningPrompt, "cortex_listening_prompt")
 {
   // with nothing listening, CortexListening still claims it (and ends at once), so it is never unclaimed.

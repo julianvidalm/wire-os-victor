@@ -10,14 +10,17 @@
  * front or with too little confidence), then the head up at the get-in's angle with a silent eye pose held
  * while the cortex captures the user's speech. The eyes take a listening color (not saved as the eye color
  * setting) until the behavior ends by any path. The cortex_listening_prompt user intent (the cortex heard no
- * speech for a while) shows a question mark above the eyes for a few seconds and keeps listening. It ends,
- * without any post-behavior suggestion, when:
+ * speech for a while) shows a question mark above the eyes for a few seconds and keeps listening. The
+ * cortex_thinking user intent (the user's speech ended and the cortex is preparing the answer) brings the
+ * user's eye color back and shows a "looking it up" face, held until the answer, cortex_listening_end (the
+ * give-up gesture: nothing to answer) or a longer thinking timeout. It ends, without any post-behavior
+ * suggestion, when:
  *   - any other user intent becomes pending (e.g. the cortex's answer). That intent is left pending so the
  *     behavior that handles it can claim it right after.
  *   - the cortex_listening_end user intent arrives: it plays a short "never mind" gesture, then ends.
  *   - a safety timeout expires.
- * A stray cortex_listening_end or cortex_listening_prompt (nothing listening, e.g. after this behavior was
- * interrupted) is consumed silently, so it never counts as an unclaimed intent.
+ * A stray cortex_listening_end, cortex_listening_prompt or cortex_thinking (nothing listening, e.g. after this
+ * behavior was interrupted) is consumed silently, so it never counts as an unclaimed intent.
  *
  **/
 
@@ -48,7 +51,8 @@ public:
     ListeningEnd,  // cortex_listening_end arrived while listening (after the give-up gesture)
     StrayEnd,      // cortex_listening_end arrived while not listening
     StrayPrompt,   // cortex_listening_prompt arrived while not listening
-    Timeout,       // the safety timeout expired
+    StrayThinking, // cortex_thinking arrived while not listening
+    Timeout,       // the safety timeout (listening or thinking) expired
   };
 
   EndReason GetLastEndReason() const { return _lastEndReason; }
@@ -56,6 +60,7 @@ public:
   // Exposed for tests
   bool IsShowingListeningEyeColor() const { return _showingListeningEyeColor; }
   bool IsGivingUp() const { return _dVars.givingUp; }
+  bool IsThinking() const { return _dVars.thinking; }
   int GetNumPromptsShown() const { return _dVars.numPrompts; }
 
   // Direction the voice came from, picked when the behavior last activated (kMicDirectionUnknown if none)
@@ -102,6 +107,9 @@ private:
     std::string promptSpriteName;
     float promptDuration_s;
     std::string giveUpAnimName;
+    std::string thinkingGetInAnimName;
+    std::string thinkingLoopAnimName;
+    float thinkingTimeout_s;
   };
 
   struct DynamicVariables {
@@ -111,6 +119,7 @@ private:
     float giveUpStart_s = 0.0f;
     bool promptShowing = false;
     int numPrompts = 0;
+    bool thinking = false;
   };
 
   void TransitionToTurnTowardVoice();
@@ -118,6 +127,8 @@ private:
   void ShowPrompt();
   void ClearPrompt();
   void TransitionToGiveUp();
+  void TransitionToThinking();
+  void TransitionToThinkingLoop();
   void RestoreEyeColor();
   void EndListening(EndReason reason);
 

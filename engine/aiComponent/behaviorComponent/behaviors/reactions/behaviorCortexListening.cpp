@@ -49,6 +49,9 @@ const char* kEyeSaturationKey = "eyeSaturation";
 const char* kPromptSpriteKey = "promptSpriteName";
 const char* kPromptDurationKey = "promptDuration_s";
 const char* kGiveUpAnimKey = "giveUpAnimName";
+const char* kThinkingGetInAnimKey = "thinkingGetInAnimName";
+const char* kThinkingLoopAnimKey = "thinkingLoopAnimName";
+const char* kThinkingTimeoutKey = "thinkingTimeout_s";
 
 const char* kDefaultAnimName = "anim_eyepose_curious";
 constexpr float kDefaultTimeout_s = 15.0f;
@@ -60,6 +63,11 @@ const char* kDefaultPromptSprite = "cortex_question_mark";
 constexpr float kDefaultPromptDuration_s = 3.0f;
 // the stock "didn't get that" reaction after a wake word (VC_IntentNeutral / ag_vc_wakeword_idk), 1.0s
 const char* kDefaultGiveUpAnim = "anim_wakeword_idk_01";
+// the stock KnowledgeGraph "looking it up" face (ag_knowledgegraph_getin_01 / ag_knowledgegraph_searching_01)
+const char* kDefaultThinkingGetInAnim = "anim_generic_look_up_01";
+const char* kDefaultThinkingLoopAnim = "anim_generic_look_up_idle_01";
+// the cortex's LLM can take a while; the answer or cortex_listening_end normally comes well before this
+constexpr float kDefaultThinkingTimeout_s = 20.0f;
 // the question mark, centered above the eyes. 18x26 sprite drawn in the eye color
 constexpr int16_t kPromptSpriteX = 83;
 constexpr int16_t kPromptSpriteY = 0;
@@ -86,6 +94,7 @@ const char* EndReasonToString(BehaviorCortexListening::EndReason reason)
     case BehaviorCortexListening::EndReason::ListeningEnd: return "ListeningEnd";
     case BehaviorCortexListening::EndReason::StrayEnd:     return "StrayEnd";
     case BehaviorCortexListening::EndReason::StrayPrompt:  return "StrayPrompt";
+    case BehaviorCortexListening::EndReason::StrayThinking: return "StrayThinking";
     case BehaviorCortexListening::EndReason::Timeout:      return "Timeout";
   }
   return "Unknown";
@@ -149,6 +158,14 @@ BehaviorCortexListening::BehaviorCortexListening(const Json::Value& config)
   JsonTools::GetValueOptional(config, kPromptDurationKey, _iConfig.promptDuration_s);
   _iConfig.giveUpAnimName = kDefaultGiveUpAnim;
   JsonTools::GetValueOptional(config, kGiveUpAnimKey, _iConfig.giveUpAnimName);
+
+  // empty strings skip the thinking get-in, or hold the current face instead of a thinking loop
+  _iConfig.thinkingGetInAnimName = kDefaultThinkingGetInAnim;
+  JsonTools::GetValueOptional(config, kThinkingGetInAnimKey, _iConfig.thinkingGetInAnimName);
+  _iConfig.thinkingLoopAnimName = kDefaultThinkingLoopAnim;
+  JsonTools::GetValueOptional(config, kThinkingLoopAnimKey, _iConfig.thinkingLoopAnimName);
+  _iConfig.thinkingTimeout_s = kDefaultThinkingTimeout_s;
+  JsonTools::GetValueOptional(config, kThinkingTimeoutKey, _iConfig.thinkingTimeout_s);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -172,6 +189,9 @@ void BehaviorCortexListening::GetBehaviorJsonKeys(std::set<const char*>& expecte
   expectedKeys.insert(kPromptSpriteKey);
   expectedKeys.insert(kPromptDurationKey);
   expectedKeys.insert(kGiveUpAnimKey);
+  expectedKeys.insert(kThinkingGetInAnimKey);
+  expectedKeys.insert(kThinkingLoopAnimKey);
+  expectedKeys.insert(kThinkingTimeoutKey);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -273,6 +293,11 @@ void BehaviorCortexListening::OnBehaviorActivated()
   if( uic.IsUserIntentActive(USER_INTENT(cortex_listening_prompt)) ) {
     // same for a prompt about a capture we are not showing
     EndListening(EndReason::StrayPrompt);
+    return;
+  }
+  if( uic.IsUserIntentActive(USER_INTENT(cortex_thinking)) ) {
+    // and for the end of speech of a capture we are not showing; its answer is handled by its own behavior
+    EndListening(EndReason::StrayThinking);
     return;
   }
 
@@ -416,6 +441,38 @@ void BehaviorCortexListening::TransitionToGiveUp()
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorCortexListening::TransitionToThinking()
+{
+  // the user stopped talking and the cortex is preparing the answer: the user's eye color again and the
+  // "looking it up" face until the answer arrives (claimed by its own behavior), with a longer safety timeout
+  _dVars.thinking = true;
+  _dVars.listeningStart_s = GetCurrentTime_s();
+  CancelDelegates(false);
+  ClearPrompt();
+  RestoreEyeColor();
+  LOG_INFO("BehaviorCortexListening.Thinking", "the cortex is preparing the answer");
+
+  if( _iConfig.thinkingGetInAnimName.empty() ) {
+    TransitionToThinkingLoop();
+    return;
+  }
+  DelegateIfInControl(new PlayAnimationAction(_iConfig.thinkingGetInAnimName),
+                      &BehaviorCortexListening::TransitionToThinkingLoop);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorCortexListening::TransitionToThinkingLoop()
+{
+  if( _iConfig.thinkingLoopAnimName.empty() ) {
+    return;
+  }
+  // loops until the behavior ends (answer, give-up or timeout cancel it)
+  DelegateIfInControl(new PlayAnimationAction(_iConfig.thinkingLoopAnimName, 0, true,
+                                              (u8)AnimTrackFlag::NO_TRACKS,
+                                              PlayAnimationAction::GetInfiniteTimeoutInSeconds()));
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 void BehaviorCortexListening::BehaviorUpdate()
 {
   if( !IsActivated() ) {
@@ -433,6 +490,9 @@ void BehaviorCortexListening::BehaviorUpdate()
     if( uic.IsUserIntentPending(USER_INTENT(cortex_listening_prompt)) ) {
       uic.DropUserIntent(USER_INTENT(cortex_listening_prompt));
     }
+    if( uic.IsUserIntentPending(USER_INTENT(cortex_thinking)) ) {
+      uic.DropUserIntent(USER_INTENT(cortex_thinking));
+    }
     if( uic.IsAnyUserIntentPending() ) {
       EndListening(EndReason::NextIntent);
     } else if( GetCurrentTime_s() - _dVars.giveUpStart_s >= kMaxGiveUp_s ) {
@@ -442,8 +502,23 @@ void BehaviorCortexListening::BehaviorUpdate()
   }
 
   if( uic.IsUserIntentPending(USER_INTENT(cortex_listening_end)) ) {
+    // while listening: no speech. While thinking: nothing to answer. Same short gesture either way
     uic.DropUserIntent(USER_INTENT(cortex_listening_end));
     TransitionToGiveUp();
+    return;
+  }
+
+  if( uic.IsUserIntentPending(USER_INTENT(cortex_thinking)) ) {
+    uic.DropUserIntent(USER_INTENT(cortex_thinking));
+    if( !_dVars.thinking ) {
+      TransitionToThinking();
+    }
+    return;
+  }
+
+  if( _dVars.thinking && uic.IsUserIntentPending(USER_INTENT(cortex_listening_prompt)) ) {
+    // the user already spoke: a late prompt means nothing now
+    uic.DropUserIntent(USER_INTENT(cortex_listening_prompt));
     return;
   }
 
@@ -456,9 +531,17 @@ void BehaviorCortexListening::BehaviorUpdate()
   }
 
   if( uic.IsUserIntentPending(USER_INTENT(cortex_listening)) ) {
-    // a new wake while already listening: keep the eyes and restart the safety timeout
+    // a new wake while already listening: keep the eyes and restart the safety timeout. While thinking, the
+    // user starts over: back to the listening eyes
     uic.DropUserIntent(USER_INTENT(cortex_listening));
     _dVars.listeningStart_s = GetCurrentTime_s();
+    if( _dVars.thinking ) {
+      _dVars.thinking = false;
+      CancelDelegates(false);
+      GetBEI().GetSettingsManager().ShowTemporaryEyeColor(_iConfig.eyeHue, _iConfig.eyeSaturation);
+      _showingListeningEyeColor = true;
+      TransitionToHoldListening();
+    }
     return;
   }
 
@@ -468,7 +551,8 @@ void BehaviorCortexListening::BehaviorUpdate()
     return;
   }
 
-  if( GetCurrentTime_s() - _dVars.listeningStart_s >= _iConfig.timeout_s ) {
+  const float timeout_s = _dVars.thinking ? _iConfig.thinkingTimeout_s : _iConfig.timeout_s;
+  if( GetCurrentTime_s() - _dVars.listeningStart_s >= timeout_s ) {
     EndListening(EndReason::Timeout);
   }
 }
@@ -479,7 +563,8 @@ void BehaviorCortexListening::EndListening(EndReason reason)
   _lastEndReason = reason;
   LOG_INFO("BehaviorCortexListening.EndListening", "%s after %.2fs",
            EndReasonToString(reason),
-           ((reason == EndReason::StrayEnd) || (reason == EndReason::StrayPrompt)) ? 0.0f : GetCurrentTime_s() - _dVars.listeningStart_s);
+           ((reason == EndReason::StrayEnd) || (reason == EndReason::StrayPrompt) ||
+            (reason == EndReason::StrayThinking)) ? 0.0f : GetCurrentTime_s() - _dVars.listeningStart_s);
   CancelSelf();
 }
 
