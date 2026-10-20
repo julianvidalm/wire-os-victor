@@ -34,6 +34,9 @@ namespace Anim {
 
 CONSOLE_VAR(u32, kOfflineTimeBeforeLights_ms, "Backpacklights", (1000*60*2));
 CONSOLE_VAR(u32, kOfflineCheckFreq_ms,        "Backpacklights", 5000);
+// v3ctor: listening shows on the face (eye color and gesture), not with Alexa-style lights; true brings back the
+// pulsing cyan backpack and system lights while the mic streams to the cloud
+CONSOLE_VAR(bool, kShowStreamingLights,       "Backpacklights", false);
   
 enum class BackpackLightSourcePrivate : BackpackLightSourceType
 {
@@ -183,7 +186,7 @@ void BackpackLightComponent::Update()
 
   // Consider stream to be open when the trigger word is detected or we are actually
   // streaming. Trigger word stays detected until the stream state is updated
-  const bool isCloudStreamOpen = (_willStreamOpen || _isStreaming);
+  const bool isCloudStreamOpen = kShowStreamingLights && (_willStreamOpen || _isStreaming);
   UpdateCriticalBackpackLightConfig(isCloudStreamOpen, _micMuted);
 
   UpdateSystemLightState(isCloudStreamOpen);
