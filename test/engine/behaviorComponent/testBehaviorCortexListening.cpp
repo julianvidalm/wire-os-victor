@@ -5,7 +5,8 @@
  *
  * Description: Unit tests for the PC cortex listening behavior: it starts on cortex_listening, holds while
  * active, and ends on the next intent (leaving it pending for its own behavior), on cortex_listening_end,
- * or on its timeout, without leaving a post-behavior suggestion behind.
+ * or on its timeout, without leaving a post-behavior suggestion behind. It picks the voice direction to turn
+ * toward from the mic direction history over the wake phrase.
  *
  **/
 
@@ -20,6 +21,9 @@
 #include "engine/aiComponent/behaviorComponent/behaviors/reactions/behaviorCortexListening.h"
 #include "engine/aiComponent/behaviorComponent/userIntentComponent.h"
 #include "engine/aiComponent/behaviorComponent/userIntents.h"
+#include "engine/components/mics/micComponent.h"
+#include "engine/components/mics/micDirectionHistory.h"
+#include "engine/robot.h"
 #include "test/engine/behaviorComponent/testBehaviorFramework.h"
 
 using namespace Anki;
@@ -99,6 +103,15 @@ protected:
     return false;
   }
 
+  // one mic direction sample every 10ms over [begin_ms, end_ms)
+  static void AddSamples(MicDirectionHistory& history, TimeStamp_t begin_ms, TimeStamp_t end_ms,
+                         MicDirectionIndex dir, MicDirectionConfidence conf)
+  {
+    for( TimeStamp_t t = begin_ms; t < end_ms; t += 10 ) {
+      history.AddDirectionSample(t, true, dir, conf, dir);
+    }
+  }
+
   TestBehaviorFramework _tbf;
   std::shared_ptr<BehaviorCortexListening> _behavior;
   float _time_s = 0.0f;
@@ -175,6 +188,81 @@ TEST_F(CortexListeningTest, StrayListeningEndIsConsumedSilently)
   EXPECT_FALSE( UIC().WasUserIntentUnclaimed() );
   EXPECT_FALSE( _behavior->IsActivated() );
   EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::StrayEnd );
+}
+
+TEST(CortexListeningVoiceDirection, PicksTheDominantConfidentDirection)
+{
+  MicDirectionHistory history{};
+  // the wake phrase mostly from 3 o'clock, a shorter burst from 9 o'clock
+  for( TimeStamp_t t = 1000; t < 1800; t += 10 ) {
+    const MicDirectionIndex dir = ( t < 1200 ) ? 9 : 3;
+    history.AddDirectionSample(t, true, dir, 2000, dir);
+  }
+  EXPECT_EQ( BehaviorCortexListening::PickVoiceDirection(history, 2000, 2000, 500), 3 );
+}
+
+TEST(CortexListeningVoiceDirection, IgnoresLowConfidenceAndUnknown)
+{
+  MicDirectionHistory history{};
+  for( TimeStamp_t t = 1000; t < 1800; t += 10 ) {
+    // a lot of low confidence noise from 6 o'clock and unknown direction, a little confident voice from 2
+    const MicDirectionIndex dir = ( t < 1600 ) ? 6 : ( t < 1700 ? kMicDirectionUnknown : 2 );
+    const MicDirectionConfidence conf = ( t < 1600 ) ? 100 : 2000;
+    history.AddDirectionSample(t, true, dir, conf, dir);
+  }
+  EXPECT_EQ( BehaviorCortexListening::PickVoiceDirection(history, 2000, 2000, 500), 2 );
+}
+
+TEST(CortexListeningVoiceDirection, UnknownWhenNothingIsConfident)
+{
+  MicDirectionHistory history{};
+  for( TimeStamp_t t = 1000; t < 1800; t += 10 ) {
+    history.AddDirectionSample(t, true, 4, 100, 4);
+  }
+  EXPECT_EQ( BehaviorCortexListening::PickVoiceDirection(history, 2000, 2000, 500), kMicDirectionUnknown );
+  EXPECT_EQ( BehaviorCortexListening::PickVoiceDirection(MicDirectionHistory{}, 2000, 2000, 500),
+             kMicDirectionUnknown );
+}
+
+TEST(CortexListeningVoiceDirection, OnlyCountsTheWindow)
+{
+  MicDirectionHistory history{};
+  // a long confident sound from 8 o'clock well before the wake phrase, then the phrase from 4 o'clock
+  for( TimeStamp_t t = 1000; t < 6000; t += 10 ) {
+    const MicDirectionIndex dir = ( t < 5000 ) ? 8 : 4;
+    history.AddDirectionSample(t, true, dir, 2000, dir);
+  }
+  EXPECT_EQ( BehaviorCortexListening::PickVoiceDirection(history, 6000, 1500, 500), 4 );
+}
+
+TEST_F(CortexListeningTest, PicksTheWakePhraseDirectionOnActivation)
+{
+  // the wake phrase came from 3 o'clock during the last second
+  const TimeStamp_t now_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
+  auto& history = _tbf.GetRobot().GetMicComponent().GetMicDirectionHistory();
+  AddSamples( history, now_ms - 1000, now_ms - 200, 3, 2000 );
+  AddSamples( history, now_ms - 200, now_ms, kMicDirectionUnknown, 0 );
+
+  StartListening();
+  EXPECT_EQ( _behavior->GetLastVoiceDirection(), 3 );
+
+  // the gesture does not change how listening ends
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_end), UserIntentSource::Voice );
+  Tick();
+  EXPECT_FALSE( _behavior->IsActivated() );
+  EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::ListeningEnd );
+  EXPECT_FALSE( UIC().IsAnyUserIntentPending() );
+}
+
+TEST_F(CortexListeningTest, NoConfidentDirectionStillListens)
+{
+  StartListening();
+  EXPECT_EQ( _behavior->GetLastVoiceDirection(), kMicDirectionUnknown );
+
+  UIC().DevSetUserIntentPending( USER_INTENT(imperative_lookatme), UserIntentSource::Voice );
+  Tick();
+  EXPECT_FALSE( _behavior->IsActivated() );
+  EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::NextIntent );
 }
 
 } // namespace

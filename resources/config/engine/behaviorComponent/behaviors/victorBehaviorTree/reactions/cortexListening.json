@@ -1,7 +1,10 @@
 {
-  // Silent listening face while the PC cortex captures speech after its wake word. Holds the eye pose until
-  // the next user intent (the answer, left pending for its own behavior), cortex_listening_end, or the
-  // timeout. Deliberately no postBehaviorSuggestion: HighLevelAI resumes its previous state.
+  // Listening reaction for the PC cortex after its wake word. First the stock "hey vector" gesture: the wake
+  // word earcon and get-in (head up), then the stock turn toward the voice (ReactToTriggerDirectionAwake: no
+  // turn on the charger, when picked up, or for voices from 11, 12 and 1 o'clock), then the head up at the
+  // get-in's angle and a silent eye pose held until the next user intent (the answer, left pending for its
+  // own behavior), cortex_listening_end, or the timeout. Deliberately no postBehaviorSuggestion: HighLevelAI
+  // resumes its previous state.
   "behaviorID": "CortexListening",
   "behaviorClass": "CortexListening",
 
@@ -12,6 +15,15 @@
     { "type": "cortex_listening_end" }
   ],
   "showActiveIntentFeedback": false,
+
+  // empty strings disable the earcon, the get-in or the turn
+  "earConAudioEvent": "Play__Robot_Vic_Sfx__Wake_Word_On",
+  "getInAnimTrigger": "VC_ListeningGetIn",
+  "turnBehavior": "ReactToTriggerDirectionAwake",
+  // dominant mic direction over this window before the wake intent arrived, ignoring low confidence samples
+  "directionWindow_s": 2.0,
+  "minDirectionConfidence": 500,
+  "headAngle_deg": 33.0,
 
   "animName": "anim_eyepose_curious",
   "timeout_s": 10.0
