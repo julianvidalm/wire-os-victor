@@ -28,7 +28,8 @@
 #include "engine/components/mics/micComponent.h"
 #include "engine/components/mics/micDirectionHistory.h"
 #include "engine/robot.h"
-#include "coretech/vision/shared/spritePathMap.h"
+#include "engine/cozmoContext.h"
+#include "util/fileUtils/fileUtils.h"
 #include "anki/cozmo/shared/cozmoConfig.h"
 #include "test/engine/behaviorComponent/testBehaviorFramework.h"
 
@@ -225,51 +226,47 @@ TEST_F(CortexListeningTest, PromptKeepsListeningAndRestartsTimeout)
   EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
 }
 
-TEST_F(CortexListeningTest, PromptEyesLookUpThenComeBackDownWhileListening)
+TEST_F(CortexListeningTest, EveryPromptPlaysTheNativeClipAndKeepsListening)
 {
   StartListening();
-  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
+  EXPECT_EQ( _behavior->GetPromptAnimName(), "anim_cortex_listening_prompt_01" );
   UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
   Tick();
-  EXPECT_TRUE( _behavior->ArePromptEyesUp() );
-
-  // still up just before the question mark ends (promptDuration_s 3.0), down right after, still listening
-  Tick(1, 2.8f);
-  EXPECT_TRUE( _behavior->ArePromptEyesUp() );
-  Tick(1, 0.3f);
-  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
+  EXPECT_EQ( _behavior->GetNumPromptsShown(), 1 );
+  Tick(1, 3.1f);
   EXPECT_TRUE( _behavior->IsActivated() );
   EXPECT_TRUE( _behavior->IsShowingListeningEyeColor() );
   EXPECT_FALSE( _behavior->IsGivingUp() );
 
-  // a second prompt looks up again
+  // a second prompt plays it again, still listening
   UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
   Tick();
   EXPECT_EQ( _behavior->GetNumPromptsShown(), 2 );
-  EXPECT_TRUE( _behavior->ArePromptEyesUp() );
+  EXPECT_TRUE( _behavior->IsActivated() );
+  EXPECT_FALSE( UIC().IsAnyUserIntentPending() );
 }
 
-TEST_F(CortexListeningTest, PromptEyesComeDownOnThinking)
+TEST_F(CortexListeningTest, PromptStopsOnThinkingGiveUpAndTheAnswer)
 {
   StartListening();
   UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
   Tick();
-  ASSERT_TRUE( _behavior->ArePromptEyesUp() );
   UIC().DevSetUserIntentPending( USER_INTENT(cortex_thinking), UserIntentSource::Voice );
   Tick();
   EXPECT_TRUE( _behavior->IsThinking() );
-  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
-}
+  EXPECT_FALSE( _behavior->IsShowingPrompt() );
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_end), UserIntentSource::Voice );
+  Tick();
+  Tick(1, 4.0f);
+  EXPECT_FALSE( _behavior->IsActivated() );
 
-TEST_F(CortexListeningTest, PromptEyesComeDownOnGiveUpAndOnTheAnswer)
-{
   StartListening();
   UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
   Tick();
-  ASSERT_TRUE( _behavior->ArePromptEyesUp() );
   UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_end), UserIntentSource::Voice );
   Tick();
-  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
+  EXPECT_TRUE( _behavior->IsGivingUp() );
+  EXPECT_FALSE( _behavior->IsShowingPrompt() );
   EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
   Tick(1, 4.0f);
   EXPECT_FALSE( _behavior->IsActivated() );
@@ -277,61 +274,61 @@ TEST_F(CortexListeningTest, PromptEyesComeDownOnGiveUpAndOnTheAnswer)
   StartListening();
   UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
   Tick();
-  ASSERT_TRUE( _behavior->ArePromptEyesUp() );
   UIC().DevSetUserIntentPending( USER_INTENT(imperative_lookatme), UserIntentSource::Voice );
   Tick();
   EXPECT_FALSE( _behavior->IsActivated() );
-  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
+  EXPECT_FALSE( _behavior->IsShowingPrompt() );
 }
 
-TEST(CortexListeningPrompt, DefaultQuestionMarkPopsInBobsAndFadesOut)
+// The prompt clip keeps the eyes rendering under its question mark: the face track must run at least until the
+// sprite is cleared (a sprite drawn after the face track ends replaces the eyes on the screen), and it starts and
+// ends on the listening pose so the eyes never jump
+TEST(CortexListeningPrompt, NativeClipKeepsTheEyesUnderTheQuestionMark)
 {
-  using Vision::SpritePathMap;
-  const auto keyFrames = BehaviorCortexListening::MakePromptKeyFrames( "cortex_question_mark", 3000 );
-  ASSERT_GE( keyFrames.size(), 8u );
-  EXPECT_LE( keyFrames.size(), 40u );
+  const auto* dataPlatform = cozmoContext->GetDataPlatform();
+  Json::Value root;
+  ASSERT_TRUE( dataPlatform->readAsJson(Util::Data::Scope::Resources,
+                                        "config/engine/animations/anim_cortex_listening_prompt_01.json", root) );
+  const Json::Value& clip = root["anim_cortex_listening_prompt_01"];
+  ASSERT_TRUE( clip.isArray() );
 
-  EXPECT_EQ( keyFrames.front().triggerTime_ms, 0u );
-  EXPECT_EQ( keyFrames.front().assetID, SpritePathMap::GetAssetID("cortex_question_mark_pop_01") );
-  EXPECT_EQ( keyFrames.back().assetID, SpritePathMap::kClearSpriteBoxID );
-  EXPECT_EQ( keyFrames.back().triggerTime_ms, 3000u - (3000u % ANIM_TIME_STEP_MS) );
-  EXPECT_EQ( keyFrames[keyFrames.size() - 2].assetID, SpritePathMap::GetAssetID("cortex_question_mark_fade_02") );
-
-  std::set<int> baseY;
-  for( size_t i = 0; i < keyFrames.size(); ++i ) {
-    const auto& kf = keyFrames[i];
-    EXPECT_EQ( kf.triggerTime_ms % ANIM_TIME_STEP_MS, 0u ) << i;
-    if( i > 0 ) {
-      EXPECT_GT( kf.triggerTime_ms, keyFrames[i-1].triggerTime_ms ) << i;
-    }
-    EXPECT_GE( kf.spriteBox.xPos, 0 ) << i;
-    EXPECT_GE( kf.spriteBox.yPos, 0 ) << i;
-    EXPECT_LE( kf.spriteBox.xPos + kf.spriteBox.width, FACE_DISPLAY_WIDTH ) << i;
-    EXPECT_LE( kf.spriteBox.yPos + kf.spriteBox.height, FACE_DISPLAY_HEIGHT ) << i;
-    EXPECT_EQ( kf.spriteBox.renderMethod, Vision::SpriteRenderMethod::EyeColor ) << i;
-    if( kf.assetID == SpritePathMap::GetAssetID("cortex_question_mark") ) {
-      baseY.insert( kf.spriteBox.yPos );
+  std::vector<const Json::Value*> faces;
+  std::vector<const Json::Value*> sprites;
+  for( const auto& kf : clip ) {
+    if( kf["Name"].asString() == "ProceduralFaceKeyFrame" ) {
+      faces.push_back(&kf);
+    } else if( kf["Name"].asString() == "SpriteBoxKeyFrame" ) {
+      sprites.push_back(&kf);
     }
   }
-  // it bobs: the still question mark shows at more than one height
-  EXPECT_GE( baseY.size(), 2u );
+  ASSERT_GE( faces.size(), 3u );
+  ASSERT_EQ( sprites.size(), 2u );
+  EXPECT_EQ( (*faces.front())["triggerTime_ms"].asUInt(), 0u );
+  for( const char* eye : {"leftEye", "rightEye"} ) {
+    EXPECT_EQ( (*faces.front())[eye], (*faces.back())[eye] ) << eye;
+  }
 
-  // a long prompt still fits one message and is cleared at its end
-  const auto longKeyFrames = BehaviorCortexListening::MakePromptKeyFrames( "cortex_question_mark", 30000 );
-  EXPECT_LE( longKeyFrames.size(), 40u );
-  EXPECT_EQ( longKeyFrames.back().assetID, SpritePathMap::kClearSpriteBoxID );
-  EXPECT_EQ( longKeyFrames.back().triggerTime_ms, 30000u - (30000u % ANIM_TIME_STEP_MS) );
-}
+  // the screen-right eye rises higher than the screen-left one at the "huh?" pose
+  const Json::Value& huh = *faces[faces.size() / 2];
+  EXPECT_LT( huh["rightEye"][1].asFloat(), huh["leftEye"][1].asFloat() );
 
-TEST(CortexListeningPrompt, OtherSpritesShowStillUntilTheEnd)
-{
-  using Vision::SpritePathMap;
-  const auto keyFrames = BehaviorCortexListening::MakePromptKeyFrames( "some_other_sprite", 3000 );
-  ASSERT_EQ( keyFrames.size(), 2u );
-  EXPECT_EQ( keyFrames[0].assetID, SpritePathMap::GetAssetID("some_other_sprite") );
-  EXPECT_EQ( keyFrames[0].triggerTime_ms, 0u );
-  EXPECT_EQ( keyFrames[1].assetID, SpritePathMap::kClearSpriteBoxID );
-  EXPECT_EQ( keyFrames[1].triggerTime_ms, 3000u - (3000u % ANIM_TIME_STEP_MS) );
+  uint32_t clear_ms = 0;
+  for( const auto* kf : sprites ) {
+    EXPECT_EQ( (*kf)["renderMethod"].asString(), "RGBA" );
+    EXPECT_EQ( (*kf)["spriteBoxName"].asString(), "SpriteBox_1" );
+    EXPECT_GE( (*kf)["xPos"].asInt(), 0 );
+    EXPECT_LE( (*kf)["xPos"].asInt() + (*kf)["width"].asInt(), FACE_DISPLAY_WIDTH );
+    EXPECT_LE( (*kf)["yPos"].asInt() + (*kf)["height"].asInt(), FACE_DISPLAY_HEIGHT );
+    const std::string seqDir = dataPlatform->pathToResource(Util::Data::Scope::Resources,
+                                                            "config/sprites/spriteSequences/" +
+                                                            (*kf)["assetName"].asString());
+    const auto frames = Util::FileUtils::FilesInDirectory(seqDir, false, "png");
+    EXPECT_FALSE( frames.empty() ) << seqDir;
+    clear_ms = std::max<uint32_t>(clear_ms, (*kf)["triggerTime_ms"].asUInt() +
+                                            static_cast<uint32_t>(frames.size()) * ANIM_TIME_STEP_MS);
+  }
+  EXPECT_EQ( (*sprites.back())["spriteSeqEndType"].asString(), "Clear" );
+  EXPECT_GE( (*faces.back())["triggerTime_ms"].asUInt(), clear_ms );
 }
 
 TEST_F(CortexListeningTest, AnswerDuringPromptEndsAndIsClaimedByItsBehavior)
