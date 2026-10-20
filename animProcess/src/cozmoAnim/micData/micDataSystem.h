@@ -27,6 +27,7 @@
 #include "clad/robotInterface/messageRobotToEngine.h"
 #include "clad/types/beatDetectorTypes.h"
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <list>
@@ -122,6 +123,13 @@ public:
   void UpdateTimeZone(const std::string& newTimeZone);
   
   bool IsSpeakerPlayingAudio() const;
+
+  // External (SDK) audio, e.g. the PC cortex voice streamed to the robot, is playing on the speaker (from its
+  // prepare until it completes, is cancelled or fails). Main thread
+  void SetExternalAudioPlaying(bool playing);
+  // While external audio plays and for a short tail after it, the robot's own speech can contain "hey vector":
+  // voice triggers are not recognized (the backpack button still is). Any thread
+  bool IsVoiceTriggerSuppressedByExternalAudio(uint32_t& out_msSinceEnd) const;
   
   // Get the maximum speaker 'latency', which is the max delay between when we
   // command audio to be played and it actually gets played on the speaker
@@ -182,6 +190,9 @@ private:
 #endif
   
   std::atomic<uint32_t> _speakerLatency_ms{0};
+  std::atomic<bool>     _externalAudioPlaying{false};
+  // steady clock ms when the latest external audio stopped playing (0 = never)
+  std::atomic<int64_t>  _externalAudioEnd_ms{0};
   
   RobotInterface::MicDirection _latestMicDirectionMsg;
   

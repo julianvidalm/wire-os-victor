@@ -66,6 +66,7 @@ private:
   // Private members
   // -------------------------------------------------------------------------------------------------------------------
 
+  const Anim::AnimContext* _context = nullptr;
   AudioController * _audioController = nullptr;
   StreamingWaveDataPtr _waveData = nullptr;
   uint16_t  _audioRate;
@@ -88,6 +89,8 @@ private:
   void CleanupAudioEngine();    
   void ClearOperationData();
   bool SetPlayerVolume(float volume) const;
+  // tells the mic system external audio is (not) playing, so the robot's own voice cannot wake it
+  void NotifyExternalAudioPlaying(bool playing) const;
   bool SendAnimToEngine(SDKAudioStreamingState audioState, uint32_t audioSent=0, uint32_t audioPlayed=0);
 };
 

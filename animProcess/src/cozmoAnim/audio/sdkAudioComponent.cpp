@@ -21,6 +21,7 @@
 #include "cozmoAnim/animProcessMessages.h"
 #include "cozmoAnim/audio/cozmoAudioController.h"
 #include "cozmoAnim/animContext.h"
+#include "cozmoAnim/micData/micDataSystem.h"
 
 #include "util/logging/logging.h"
 
@@ -48,6 +49,7 @@ SdkAudioComponent::SdkAudioComponent(const Anim::AnimContext* context) {
   DEV_ASSERT(nullptr != context, "SdkAudioComponent.InvalidContext");
   DEV_ASSERT(nullptr != context->GetAudioController(), "SdkAudioComponent.InvalidAudioController");
 
+  _context = context;
   _audioController = context->GetAudioController();
   _audioPrepared = false;
   _audioPosted = false;
@@ -187,6 +189,7 @@ bool SdkAudioComponent::PrepareAudioEngine(const RobotInterface::ExternalAudioPr
   _audioRate = msg.audio_rate;
   _totalAudioFramesReceived = 0;
   _audioPrepared = true;
+  NotifyExternalAudioPlaying(true);
 
   return true;
 }
@@ -288,6 +291,19 @@ void SdkAudioComponent::ClearOperationData()
   _audioPrepared = false;
   _audioPosted = false;
   _waveData = NULL;
+  // every end path (completed, cancelled, failed) comes through here
+  NotifyExternalAudioPlaying(false);
+}
+
+//
+// Voice triggers are suppressed while external audio plays (and a short tail after it)
+//
+void SdkAudioComponent::NotifyExternalAudioPlaying(bool playing) const
+{
+  auto* micDataSystem = (_context != nullptr) ? _context->GetMicDataSystem() : nullptr;
+  if (micDataSystem != nullptr) {
+    micDataSystem->SetExternalAudioPlaying(playing);
+  }
 } 
 
 //
