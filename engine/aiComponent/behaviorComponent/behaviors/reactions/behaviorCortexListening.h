@@ -10,7 +10,8 @@
  * front or with too little confidence), then the head up at the get-in's angle with a silent eye pose held
  * while the cortex captures the user's speech. The eyes take a listening color (not saved as the eye color
  * setting) until the behavior ends by any path. The cortex_listening_prompt user intent (the cortex heard no
- * speech for a while) shows a question mark above the eyes for a few seconds and keeps listening. The
+ * speech for a while) keeps listening while the eyes look up ("what's up?") and an animated question mark pops
+ * in above them and bobs for a few seconds; then the eyes come back down. The
  * cortex_thinking user intent (the user's speech ended and the cortex is preparing the answer) brings the
  * user's eye color back and shows a "looking it up" face, held until the answer, cortex_listening_end (the
  * give-up gesture: nothing to answer) or a longer thinking timeout. It ends, without any post-behavior
@@ -30,8 +31,12 @@
 
 #include "clad/audio/audioEventTypes.h"
 #include "clad/types/animationTrigger.h"
+#include "clad/types/compositeImageTypes.h"
 #include "engine/aiComponent/behaviorComponent/behaviors/iCozmoBehavior.h"
 #include "engine/components/mics/micDirectionTypes.h"
+
+#include <string>
+#include <vector>
 
 namespace Anki {
 namespace Vector {
@@ -62,6 +67,13 @@ public:
   bool IsGivingUp() const { return _dVars.givingUp; }
   bool IsThinking() const { return _dVars.thinking; }
   int GetNumPromptsShown() const { return _dVars.numPrompts; }
+  bool ArePromptEyesUp() const { return _dVars.promptEyesUp; }
+
+  // The question mark's sprite box keyframes over a prompt of duration_ms: the default sprite pops in (growing,
+  // brightening frames), bobs above the eyes and fades out, cleared at duration_ms; any other sprite just shows
+  // still until then. Times are multiples of the animation step; never more than one message can carry
+  static std::vector<Vision::SpriteBoxKeyFrame> MakePromptKeyFrames(const std::string& spriteName,
+                                                                    TimeStamp_t duration_ms);
 
   // Direction the voice came from, picked when the behavior last activated (kMicDirectionUnknown if none)
   MicDirectionIndex GetLastVoiceDirection() const { return _dVars.voiceDirection; }
@@ -106,6 +118,9 @@ private:
     float eyeSaturation;
     std::string promptSpriteName;
     float promptDuration_s;
+    float promptEyeShiftX_px;
+    float promptEyeShiftY_px;
+    float promptEyeScale;
     std::string giveUpAnimName;
     std::string thinkingGetInAnimName;
     std::string thinkingLoopAnimName;
@@ -118,6 +133,8 @@ private:
     bool givingUp = false;
     float giveUpStart_s = 0.0f;
     bool promptShowing = false;
+    bool promptEyesUp = false;
+    float promptEnd_s = 0.0f;
     int numPrompts = 0;
     bool thinking = false;
   };
@@ -126,6 +143,7 @@ private:
   void TransitionToHoldListening();
   void ShowPrompt();
   void ClearPrompt();
+  void LowerPromptEyes(TimeStamp_t duration_ms);
   void TransitionToGiveUp();
   void TransitionToThinking();
   void TransitionToThinkingLoop();

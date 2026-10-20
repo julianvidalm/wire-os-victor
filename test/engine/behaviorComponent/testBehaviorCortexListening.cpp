@@ -14,6 +14,8 @@
 
 #include "gtest/gtest.h"
 
+#include <set>
+
 #include "clad/types/behaviorComponent/behaviorClasses.h"
 #include "clad/types/behaviorComponent/behaviorIDs.h"
 #include "coretech/common/engine/utils/timer.h"
@@ -26,6 +28,8 @@
 #include "engine/components/mics/micComponent.h"
 #include "engine/components/mics/micDirectionHistory.h"
 #include "engine/robot.h"
+#include "coretech/vision/shared/spritePathMap.h"
+#include "anki/cozmo/shared/cozmoConfig.h"
 #include "test/engine/behaviorComponent/testBehaviorFramework.h"
 
 using namespace Anki;
@@ -219,6 +223,115 @@ TEST_F(CortexListeningTest, PromptKeepsListeningAndRestartsTimeout)
   EXPECT_FALSE( _behavior->IsActivated() );
   EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::Timeout );
   EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
+}
+
+TEST_F(CortexListeningTest, PromptEyesLookUpThenComeBackDownWhileListening)
+{
+  StartListening();
+  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
+  Tick();
+  EXPECT_TRUE( _behavior->ArePromptEyesUp() );
+
+  // still up just before the question mark ends (promptDuration_s 3.0), down right after, still listening
+  Tick(1, 2.8f);
+  EXPECT_TRUE( _behavior->ArePromptEyesUp() );
+  Tick(1, 0.3f);
+  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
+  EXPECT_TRUE( _behavior->IsActivated() );
+  EXPECT_TRUE( _behavior->IsShowingListeningEyeColor() );
+  EXPECT_FALSE( _behavior->IsGivingUp() );
+
+  // a second prompt looks up again
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
+  Tick();
+  EXPECT_EQ( _behavior->GetNumPromptsShown(), 2 );
+  EXPECT_TRUE( _behavior->ArePromptEyesUp() );
+}
+
+TEST_F(CortexListeningTest, PromptEyesComeDownOnThinking)
+{
+  StartListening();
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
+  Tick();
+  ASSERT_TRUE( _behavior->ArePromptEyesUp() );
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_thinking), UserIntentSource::Voice );
+  Tick();
+  EXPECT_TRUE( _behavior->IsThinking() );
+  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
+}
+
+TEST_F(CortexListeningTest, PromptEyesComeDownOnGiveUpAndOnTheAnswer)
+{
+  StartListening();
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
+  Tick();
+  ASSERT_TRUE( _behavior->ArePromptEyesUp() );
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_end), UserIntentSource::Voice );
+  Tick();
+  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
+  EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
+  Tick(1, 4.0f);
+  EXPECT_FALSE( _behavior->IsActivated() );
+
+  StartListening();
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
+  Tick();
+  ASSERT_TRUE( _behavior->ArePromptEyesUp() );
+  UIC().DevSetUserIntentPending( USER_INTENT(imperative_lookatme), UserIntentSource::Voice );
+  Tick();
+  EXPECT_FALSE( _behavior->IsActivated() );
+  EXPECT_FALSE( _behavior->ArePromptEyesUp() );
+}
+
+TEST(CortexListeningPrompt, DefaultQuestionMarkPopsInBobsAndFadesOut)
+{
+  using Vision::SpritePathMap;
+  const auto keyFrames = BehaviorCortexListening::MakePromptKeyFrames( "cortex_question_mark", 3000 );
+  ASSERT_GE( keyFrames.size(), 8u );
+  EXPECT_LE( keyFrames.size(), 40u );
+
+  EXPECT_EQ( keyFrames.front().triggerTime_ms, 0u );
+  EXPECT_EQ( keyFrames.front().assetID, SpritePathMap::GetAssetID("cortex_question_mark_pop_01") );
+  EXPECT_EQ( keyFrames.back().assetID, SpritePathMap::kClearSpriteBoxID );
+  EXPECT_EQ( keyFrames.back().triggerTime_ms, 3000u - (3000u % ANIM_TIME_STEP_MS) );
+  EXPECT_EQ( keyFrames[keyFrames.size() - 2].assetID, SpritePathMap::GetAssetID("cortex_question_mark_fade_02") );
+
+  std::set<int> baseY;
+  for( size_t i = 0; i < keyFrames.size(); ++i ) {
+    const auto& kf = keyFrames[i];
+    EXPECT_EQ( kf.triggerTime_ms % ANIM_TIME_STEP_MS, 0u ) << i;
+    if( i > 0 ) {
+      EXPECT_GT( kf.triggerTime_ms, keyFrames[i-1].triggerTime_ms ) << i;
+    }
+    EXPECT_GE( kf.spriteBox.xPos, 0 ) << i;
+    EXPECT_GE( kf.spriteBox.yPos, 0 ) << i;
+    EXPECT_LE( kf.spriteBox.xPos + kf.spriteBox.width, FACE_DISPLAY_WIDTH ) << i;
+    EXPECT_LE( kf.spriteBox.yPos + kf.spriteBox.height, FACE_DISPLAY_HEIGHT ) << i;
+    EXPECT_EQ( kf.spriteBox.renderMethod, Vision::SpriteRenderMethod::EyeColor ) << i;
+    if( kf.assetID == SpritePathMap::GetAssetID("cortex_question_mark") ) {
+      baseY.insert( kf.spriteBox.yPos );
+    }
+  }
+  // it bobs: the still question mark shows at more than one height
+  EXPECT_GE( baseY.size(), 2u );
+
+  // a long prompt still fits one message and is cleared at its end
+  const auto longKeyFrames = BehaviorCortexListening::MakePromptKeyFrames( "cortex_question_mark", 30000 );
+  EXPECT_LE( longKeyFrames.size(), 40u );
+  EXPECT_EQ( longKeyFrames.back().assetID, SpritePathMap::kClearSpriteBoxID );
+  EXPECT_EQ( longKeyFrames.back().triggerTime_ms, 30000u - (30000u % ANIM_TIME_STEP_MS) );
+}
+
+TEST(CortexListeningPrompt, OtherSpritesShowStillUntilTheEnd)
+{
+  using Vision::SpritePathMap;
+  const auto keyFrames = BehaviorCortexListening::MakePromptKeyFrames( "some_other_sprite", 3000 );
+  ASSERT_EQ( keyFrames.size(), 2u );
+  EXPECT_EQ( keyFrames[0].assetID, SpritePathMap::GetAssetID("some_other_sprite") );
+  EXPECT_EQ( keyFrames[0].triggerTime_ms, 0u );
+  EXPECT_EQ( keyFrames[1].assetID, SpritePathMap::kClearSpriteBoxID );
+  EXPECT_EQ( keyFrames[1].triggerTime_ms, 3000u - (3000u % ANIM_TIME_STEP_MS) );
 }
 
 TEST_F(CortexListeningTest, AnswerDuringPromptEndsAndIsClaimedByItsBehavior)

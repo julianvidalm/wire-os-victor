@@ -4,9 +4,9 @@
   // turn on the charger, when picked up, or for voices from 11, 12 and 1 o'clock), then the head up at the
   // get-in's angle and a silent eye pose held, in the listening eye color, until the next user intent (the
   // answer, left pending for its own behavior), cortex_listening_end (a short give-up gesture first), or the
-  // safety timeout. cortex_listening_prompt shows a question mark above the eyes and keeps listening. The
-  // user's eye color comes back on every exit. Deliberately no postBehaviorSuggestion: HighLevelAI resumes
-  // its previous state.
+  // safety timeout. cortex_listening_prompt keeps listening while the eyes look up and an animated question
+  // mark shows above them. The user's eye color comes back on every exit. Deliberately no
+  // postBehaviorSuggestion: HighLevelAI resumes its previous state.
   "behaviorID": "CortexListening",
   "behaviorClass": "CortexListening",
 
@@ -35,6 +35,11 @@
   // empty strings disable the question mark or the give-up gesture
   "promptSpriteName": "cortex_question_mark",
   "promptDuration_s": 3.0,
+  // while the question mark shows the eyes look up ("what's up?"), slightly smaller (pixels; scale of the eye
+  // height), and come back down after it
+  "promptEyeShiftX_px": 0.0,
+  "promptEyeShiftY_px": -10.0,
+  "promptEyeScale": 0.92,
   "giveUpAnimName": "anim_wakeword_idk_01",
 
   "animName": "anim_eyepose_curious",
