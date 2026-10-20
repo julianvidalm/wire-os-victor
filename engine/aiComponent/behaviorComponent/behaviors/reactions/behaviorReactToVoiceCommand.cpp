@@ -142,6 +142,9 @@ namespace {
   // quick noaudio goes straight to the give-up gesture
   constexpr float kDefaultFeedbackThinkingDelay_s  = 0.3f;
 
+  // a listening feedback step, as a log line and a DAS event (defined with the listening feedback below)
+  void LogListeningFeedback(const char* step, int value, double sinceActivation_s, int total = 0);
+
   struct VoiceSamples {
     uint32_t voice = 0; // samples (10ms) with voice activity
     uint32_t total = 0; // all samples
@@ -570,6 +573,9 @@ void BehaviorReactToVoiceCommand::OnBehaviorActivated()
     // listening eye color from the wake until listening ends (RestoreListeningEyeColor on every exit)
     GetBEI().GetSettingsManager().ShowTemporaryEyeColor( _iVars.feedback.eyeHue, _iVars.feedback.eyeSaturation );
     _showingListeningEyeColor = true;
+    // the applied color, to check live that the listening color was sent at the wake (hue and saturation x1000)
+    LogListeningFeedback( "eye_color_applied", static_cast<int>( _iVars.feedback.eyeHue * 1000.0f ), 0.0,
+                          static_cast<int>( _iVars.feedback.eyeSaturation * 1000.0f ) );
     // pick the direction before anything moves: the mic history is relative to the robot's current heading
     PickWakeDirection();
   }
@@ -1371,18 +1377,19 @@ double BehaviorReactToVoiceCommand::GetListeningTimeout() const
 namespace {
   // The Microphones log channel is off on the robot: every feedback step also goes out as a DAS event, which
   // reaches its syslog ("@behavior.voice_command.listening_feedback"), like the cortex listening reaction's
-  void LogListeningFeedback(const char* step, int value, double sinceActivation_s, int total = 0)
+  void LogListeningFeedback(const char* step, int value, double sinceActivation_s, int total)
   {
     LOG_INFO( "BehaviorReactToVoiceCommand.ListeningFeedback", "%s (%d/%d) at %.2fs",
               step, value, total, sinceActivation_s );
     DASMSG( behavior_voice_command_listening_feedback, "behavior.voice_command.listening_feedback",
             "A listening feedback step after the robot's own wake word" );
-    DASMSG_SET( s1, step, "wake_turn, wake_turn_skipped, look_end, speech_heard, vad_sample, prompt, give_up, "
+    DASMSG_SET( s1, step, "eye_color_applied, wake_turn, wake_turn_skipped, look_end, speech_heard, vad_sample, prompt, give_up, "
                           "give_up_result, thinking or eye_color_restored" );
     DASMSG_SET( i1, value, "The wake direction (0 in front, clockwise, 12 unknown) for the turn steps; voice "
-                           "samples (10ms) in the window for speech_heard and vad_sample; else 0" );
+                           "samples (10ms) in the window for speech_heard and vad_sample; hue x1000 for eye_color_applied; else 0" );
     DASMSG_SET( i2, static_cast<int>(sinceActivation_s * 1000.0), "Milliseconds since the wake reaction started" );
-    DASMSG_SET( i3, total, "All samples (10ms) in the window for speech_heard and vad_sample, else 0" );
+    DASMSG_SET( i3, total, "All samples (10ms) in the window for speech_heard and vad_sample; saturation x1000 for "
+                       "eye_color_applied; else 0" );
     DASMSG_SEND();
   }
 }
