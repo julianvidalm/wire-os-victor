@@ -24,9 +24,14 @@
   "earConAudioEvent": "Play__Robot_Vic_Sfx__Wake_Word_On",
   "getInAnimTrigger": "VC_ListeningGetIn",
   "turnBehavior": "ReactToTriggerDirectionAwake",
-  // dominant mic direction over this window before the wake intent arrived, ignoring low confidence samples
-  "directionWindow_s": 2.0,
+  // the turn goes toward the dominant mic direction over the wake phrase: this window ending at the robot time
+  // where the cortex detected the wake word (cortex_listening's wake_ts_ms), counting only samples with voice
+  // activity when voiceOnly, and ignoring low confidence samples
+  "wakeDirectionWindow_s": 1.0,
+  "voiceOnly": true,
   "minDirectionConfidence": 500,
+  // without the wake time (an older cortex): this window before the intent arrived, every sample counted
+  "directionWindow_s": 2.0,
   "headAngle_deg": 33.0,
 
   // listening eye color (UNCANNY_YELLOW), not saved as the eye color setting

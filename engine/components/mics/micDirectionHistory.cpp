@@ -72,9 +72,38 @@ void MicDirectionHistory::AddMicSample(const RobotInterface::MicDirection& messa
                      message.direction, message.confidence, message.selectedDirection);
   AddMicPowerSample(currentTime_ms, message.latestPowerValue, message.latestNoiseFloor);
   AddVadLogSample(currentTime_ms, message.latestNoiseFloor, message.activeState);
+  AddRobotTimeSample(message.timestamp, currentTime_ms);
 
   ProcessSoundReactors();
   SendMicDataToWebserver();
+}
+
+void MicDirectionHistory::AddRobotTimeSample(TimeStamp_t robotTime_ms, EngineTimeStamp_t engineTime_ms)
+{
+  _hasRobotTimeSample = true;
+  _latestRobotTime_ms = robotTime_ms;
+  _latestRobotTimeAtEngine_ms = engineTime_ms;
+}
+
+bool MicDirectionHistory::GetEngineTimeAtRobotTime(TimeStamp_t robotTime_ms, EngineTimeStamp_t& engineTime_ms) const
+{
+  if (!_hasRobotTimeSample)
+  {
+    return false;
+  }
+  // robot times are 32 bit ms; a time "after" the latest sample (or a wrapped one) maps to the latest sample
+  const int32_t age_ms = static_cast<int32_t>(_latestRobotTime_ms - robotTime_ms);
+  if (age_ms <= 0)
+  {
+    engineTime_ms = _latestRobotTimeAtEngine_ms;
+    return true;
+  }
+  if ((TimeStamp_t)age_ms > (TimeStamp_t)_latestRobotTimeAtEngine_ms)
+  {
+    return false;
+  }
+  engineTime_ms = EngineTimeStamp_t((TimeStamp_t)_latestRobotTimeAtEngine_ms - (TimeStamp_t)age_ms);
+  return true;
 }
 
 uint32_t MicDirectionHistory::GetNextNodeIdx(uint32_t nodeIndex) const
@@ -379,6 +408,10 @@ void MicDirectionHistory::AddDirectionSample(EngineTimeStamp_t timestamp,
     currentEntry.confidenceAvg = newAvgConf;
 
     ++currentEntry.count;
+    if (isVadActive)
+    {
+      ++currentEntry.vadCount;
+    }
   }
   else
   {
@@ -392,6 +425,7 @@ void MicDirectionHistory::AddDirectionSample(EngineTimeStamp_t timestamp,
     newEntry.latestConfidence = newConf;
     newEntry.timestampAtMax = timestamp;
     newEntry.count = 1;
+    newEntry.vadCount = isVadActive ? 1 : 0;
   }
 
   // only store the selected direction when it is known

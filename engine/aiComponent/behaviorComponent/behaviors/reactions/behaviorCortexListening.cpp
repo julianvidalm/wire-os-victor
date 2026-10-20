@@ -20,13 +20,16 @@
 #include "engine/aiComponent/behaviorComponent/behaviorExternalInterface/beiRobotInfo.h"
 #include "engine/aiComponent/behaviorComponent/behaviors/reactions/behaviorReactToMicDirection.h"
 #include "engine/aiComponent/behaviorComponent/userIntentComponent.h"
+#include "engine/aiComponent/behaviorComponent/userIntentData.h"
 #include "engine/audio/engineRobotAudioClient.h"
 #include "engine/components/settingsManager.h"
 #include "engine/components/mics/micComponent.h"
 #include "engine/components/mics/micDirectionHistory.h"
+#include "util/logging/DAS.h"
 
 #include <algorithm>
 #include <array>
+#include <vector>
 
 #define LOG_CHANNEL "Behaviors"
 
@@ -41,6 +44,8 @@ const char* kEarConKey = "earConAudioEvent";
 const char* kTurnBehaviorKey = "turnBehavior";
 const char* kHeadAngleKey = "headAngle_deg";
 const char* kDirectionWindowKey = "directionWindow_s";
+const char* kWakeDirectionWindowKey = "wakeDirectionWindow_s";
+const char* kVoiceOnlyKey = "voiceOnly";
 const char* kMinDirectionConfidenceKey = "minDirectionConfidence";
 const char* kEyeHueKey = "eyeHue";
 const char* kEyeSaturationKey = "eyeSaturation";
@@ -76,8 +81,13 @@ const char* kDefaultEarCon = "Play__Robot_Vic_Sfx__Wake_Word_On";
 const char* kDefaultTurnBehavior = "ReactToTriggerDirectionAwake";
 // anim_wakeword_getin_01 ends with the head at 33 degrees; the stock turns end lower (12-19)
 constexpr float kDefaultHeadAngle_deg = 33.0f;
-// the cortex's wake intent arrives ~0.5s after the wake phrase ends, so this covers the whole phrase
+// without the wake time (an older cortex): the wake intent arrives ~0.5s after the wake phrase ends, so this
+// covers the whole phrase
 constexpr float kDefaultDirectionWindow_s = 2.0f;
+// with the wake time: the wake phrase ("hey jarvis", ~0.6-0.8s) ending at the mic frame where the cortex
+// detected it. The stock trigger word turn votes over the 700ms before the detection plus the trigger overlap
+// (MicImmediateDirection::kMicDirectionBuffer_ms)
+constexpr float kDefaultWakeDirectionWindow_s = 1.0f;
 // same threshold as BehaviorReactToVoiceCommand's kDirStreamingConfToIgnore
 constexpr MicDirectionConfidence kDefaultMinDirectionConfidence = 500;
 
@@ -137,6 +147,13 @@ BehaviorCortexListening::BehaviorCortexListening(const Json::Value& config)
   _iConfig.directionWindow_s = kDefaultDirectionWindow_s;
   JsonTools::GetValueOptional(config, kDirectionWindowKey, _iConfig.directionWindow_s);
 
+  _iConfig.wakeDirectionWindow_s = kDefaultWakeDirectionWindow_s;
+  JsonTools::GetValueOptional(config, kWakeDirectionWindowKey, _iConfig.wakeDirectionWindow_s);
+
+  // over the wake phrase, count only samples with voice activity
+  _iConfig.voiceOnly = true;
+  JsonTools::GetValueOptional(config, kVoiceOnlyKey, _iConfig.voiceOnly);
+
   int minDirectionConfidence = kDefaultMinDirectionConfidence;
   JsonTools::GetValueOptional(config, kMinDirectionConfidenceKey, minDirectionConfidence);
   _iConfig.minDirectionConfidence = static_cast<MicDirectionConfidence>(minDirectionConfidence);
@@ -176,6 +193,8 @@ void BehaviorCortexListening::GetBehaviorJsonKeys(std::set<const char*>& expecte
   expectedKeys.insert(kTurnBehaviorKey);
   expectedKeys.insert(kHeadAngleKey);
   expectedKeys.insert(kDirectionWindowKey);
+  expectedKeys.insert(kWakeDirectionWindowKey);
+  expectedKeys.insert(kVoiceOnlyKey);
   expectedKeys.insert(kMinDirectionConfidenceKey);
   expectedKeys.insert(kEyeHueKey);
   expectedKeys.insert(kEyeSaturationKey);
@@ -215,8 +234,20 @@ MicDirectionIndex BehaviorCortexListening::PickVoiceDirection(const MicDirection
                                                               TimeStamp_t window_ms,
                                                               MicDirectionConfidence minConfidence)
 {
+  return VoteVoiceDirection(history, end_ms, window_ms, minConfidence, false).direction;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+BehaviorCortexListening::VoiceDirectionVote
+BehaviorCortexListening::VoteVoiceDirection(const MicDirectionHistory& history,
+                                            EngineTimeStamp_t end_ms,
+                                            TimeStamp_t window_ms,
+                                            MicDirectionConfidence minConfidence,
+                                            bool voiceOnly)
+{
+  VoiceDirectionVote vote;
   if( window_ms == 0 ) {
-    return kMicDirectionUnknown;
+    return vote;
   }
 
   const EngineTimeStamp_t begin_ms = ( (TimeStamp_t)end_ms > window_ms ) ? EngineTimeStamp_t((TimeStamp_t)end_ms - window_ms)
@@ -224,38 +255,48 @@ MicDirectionIndex BehaviorCortexListening::PickVoiceDirection(const MicDirection
   MicDirectionNodeList list = history.GetHistoryAtTime(end_ms, window_ms);
 
   // only count the part of the first and last nodes that falls inside the window
+  std::vector<double> share(list.size(), 1.0);
   if( list.size() > 1 ) {
-    MicDirectionNode& front = list.front();
+    const MicDirectionNode& front = list.front();
     if( (front.timestampBegin < begin_ms) && (front.timestampEnd > front.timestampBegin) ) {
       const double nodeDuration = TimeStamp_t(front.timestampEnd - front.timestampBegin);
       const double timeInNode = (front.timestampEnd > begin_ms) ? TimeStamp_t(front.timestampEnd - begin_ms) : 0;
-      front.count *= ( timeInNode / nodeDuration );
+      share.front() = timeInNode / nodeDuration;
     }
 
-    MicDirectionNode& back = list.back();
+    const MicDirectionNode& back = list.back();
     if( (back.timestampEnd > end_ms) && (back.timestampEnd > back.timestampBegin) ) {
       const double nodeDuration = TimeStamp_t(back.timestampEnd - back.timestampBegin);
       const double timeInNode = (end_ms > back.timestampBegin) ? TimeStamp_t(end_ms - back.timestampBegin) : 0;
-      back.count *= ( timeInNode / nodeDuration );
+      share.back() = timeInNode / nodeDuration;
     }
   }
 
   std::array<uint32_t, kNumMicDirections + 1> counts{};
+  std::array<double, kNumMicDirections + 1> confidenceSums{};
+  size_t i = 0;
   for( const auto& node : list ) {
+    const double nodeShare = share[i++];
     if( (node.directionIndex <= kMicDirectionUnknown) && (node.confidenceAvg > minConfidence) ) {
-      counts[node.directionIndex] += node.count;
+      // a direction run can mix voice and other sound; its voice samples are spread evenly over it
+      const uint32_t counted = static_cast<uint32_t>( (voiceOnly ? node.vadCount : node.count) * nodeShare );
+      counts[node.directionIndex] += counted;
+      confidenceSums[node.directionIndex] += static_cast<double>(node.confidenceAvg) * counted;
     }
   }
 
-  MicDirectionIndex best = kMicDirectionUnknown;
   uint32_t bestCount = 0;
-  for( MicDirectionIndex i = kFirstMicDirectionIndex; i < kNumMicDirections; ++i ) {
-    if( counts[i] > bestCount ) {
-      best = i;
-      bestCount = counts[i];
+  for( MicDirectionIndex dir = kFirstMicDirectionIndex; dir < kNumMicDirections; ++dir ) {
+    if( counts[dir] > bestCount ) {
+      vote.direction = dir;
+      bestCount = counts[dir];
     }
   }
-  return best;
+  if( vote.direction != kMicDirectionUnknown ) {
+    vote.samples = bestCount;
+    vote.confidence = static_cast<MicDirectionConfidence>( confidenceSums[vote.direction] / bestCount );
+  }
+  return vote;
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -300,13 +341,7 @@ void BehaviorCortexListening::OnBehaviorActivated()
   _showingListeningEyeColor = true;
 
   // pick the direction before anything moves: the history is relative to the robot's current heading
-  const MicDirectionHistory& micHistory = GetBEI().GetMicComponent().GetMicDirectionHistory();
-  const TimeStamp_t window_ms = static_cast<TimeStamp_t>(std::max(0.0f, _iConfig.directionWindow_s) * 1000.0f);
-  _dVars.voiceDirection = PickVoiceDirection(micHistory,
-                                             BaseStationTimer::getInstance()->GetCurrentTimeStamp(),
-                                             window_ms,
-                                             _iConfig.minDirectionConfidence);
-  LOG_INFO("BehaviorCortexListening.Activated", "voice direction %d", (int)_dVars.voiceDirection);
+  PickDirectionTowardVoice();
 
   // the stock trigger word response: earcon and get-in (head up)
   if( _iConfig.earCon != AudioMetaData::GameEvent::GenericEvent::Invalid ) {
@@ -319,6 +354,53 @@ void BehaviorCortexListening::OnBehaviorActivated()
   } else {
     TransitionToTurnTowardVoice();
   }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorCortexListening::PickDirectionTowardVoice()
+{
+  uint32_t wakeRobotTime_ms = 0;
+  const auto& uic = GetBehaviorComp<UserIntentComponent>();
+  UserIntentPtr intentData = uic.GetUserIntentIfActive(USER_INTENT(cortex_listening));
+  if( (intentData != nullptr) && (intentData->intent.GetTag() == USER_INTENT(cortex_listening)) ) {
+    wakeRobotTime_ms = intentData->intent.Get_cortex_listening().wake_ts_ms;
+  }
+
+  const MicDirectionHistory& micHistory = GetBEI().GetMicComponent().GetMicDirectionHistory();
+  EngineTimeStamp_t wakeEnd_ms = 0;
+  VoiceDirectionVote vote;
+  if( (wakeRobotTime_ms != 0) && micHistory.GetEngineTimeAtRobotTime(wakeRobotTime_ms, wakeEnd_ms) ) {
+    // the stock way: the dominant direction over the wake phrase itself, here only where there was voice
+    _dVars.directionFromWakeTime = true;
+    const TimeStamp_t window_ms = static_cast<TimeStamp_t>(std::max(0.0f, _iConfig.wakeDirectionWindow_s) * 1000.0f);
+    vote = VoteVoiceDirection(micHistory, wakeEnd_ms, window_ms, _iConfig.minDirectionConfidence, _iConfig.voiceOnly);
+  } else {
+    // an older cortex (no wake time), or no mic sample yet: the window before the intent, every sample
+    LOG_WARNING("BehaviorCortexListening.PickDirection.NoWakeTime",
+                "no usable wake time (wake_ts_ms %u): voting over the last %.1fs before the intent",
+                wakeRobotTime_ms, _iConfig.directionWindow_s);
+    _dVars.directionFromWakeTime = false;
+    wakeEnd_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
+    const TimeStamp_t window_ms = static_cast<TimeStamp_t>(std::max(0.0f, _iConfig.directionWindow_s) * 1000.0f);
+    vote = VoteVoiceDirection(micHistory, wakeEnd_ms, window_ms, _iConfig.minDirectionConfidence, false);
+  }
+  _dVars.voiceDirection = vote.direction;
+
+  // the Behaviors log channel is off on the robot: the choice goes out as a DAS event, which reaches its syslog
+  // ("@behavior.cortex_listening.voice_direction"), like the stock robot.reacted_to_sound
+  LOG_INFO("BehaviorCortexListening.VoiceDirection",
+           "direction %d confidence %d samples %u from %s",
+           (int)vote.direction, (int)vote.confidence, vote.samples,
+           _dVars.directionFromWakeTime ? "wake" : "fallback");
+  DASMSG( behavior_cortex_listening_voice_direction, "behavior.cortex_listening.voice_direction",
+          "Direction the cortex listening reaction turns toward after the PC cortex's wake word" );
+  DASMSG_SET( s1, _dVars.directionFromWakeTime ? "wake" : "fallback",
+              "wake: voted over the wake phrase ending at the cortex's wake time; fallback: before the intent" );
+  DASMSG_SET( i1, (int)vote.direction, "The direction (0 in front, clockwise, 12 is unknown)" );
+  DASMSG_SET( i2, (int)vote.confidence, "Average direction confidence of the counted samples" );
+  DASMSG_SET( i3, (int)vote.samples, "Samples (10 ms) counted for the direction" );
+  DASMSG_SET( i4, (int)wakeRobotTime_ms, "The cortex's wake time (robot ms), 0 if none" );
+  DASMSG_SEND();
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -

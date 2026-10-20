@@ -6,8 +6,10 @@
  * Description: "I'm listening" reaction for the PC cortex. Responds to the cortex_listening user intent (sent
  * by the cortex when it hears the wake word) with the stock "hey vector" gesture: the wake word earcon and
  * get-in (head up), then the stock turn toward the direction the voice came from (robot mic direction
- * history over the wake phrase; no turn on the charger, when picked up, or when the voice came from the
- * front or with too little confidence), then the head up at the get-in's angle with a silent eye pose held
+ * history over the wake phrase: the window ends at the robot time where the cortex detected the wake word,
+ * cortex_listening's wake_ts_ms, and counts only samples with voice activity; without that time, the window
+ * before the intent arrived with every sample, as before. No turn on the charger, when picked up, or when the
+ * voice came from the front or with too little confidence), then the head up at the get-in's angle with a silent eye pose held
  * while the cortex captures the user's speech. The eyes take a listening color (not saved as the eye color
  * setting) until the behavior ends by any path. The cortex_listening_prompt user intent (the cortex heard no
  * speech for a while) keeps listening while one native clip plays: the eyes raise their brows ("huh?") while a
@@ -71,6 +73,27 @@ public:
 
   // Direction the voice came from, picked when the behavior last activated (kMicDirectionUnknown if none)
   MicDirectionIndex GetLastVoiceDirection() const { return _dVars.voiceDirection; }
+  // Whether that direction was voted over the wake phrase (the cortex sent the wake time) rather than the
+  // fallback window before the intent
+  bool WasLastDirectionFromWakeTime() const { return _dVars.directionFromWakeTime; }
+
+  struct VoiceDirectionVote {
+    MicDirectionIndex direction = kMicDirectionUnknown;
+    // average SignalEssence confidence of the winning direction's counted samples
+    MicDirectionConfidence confidence = 0;
+    // samples counted for the winning direction (10 ms each)
+    uint32_t samples = 0;
+  };
+
+  // Most common direction heard in the window [end_ms - window_ms, end_ms], counting only samples whose
+  // average confidence is above minConfidence and, with voiceOnly, only samples with voice activity (VAD).
+  // Without voiceOnly it is the stock trigger word reaction's vote
+  // (BehaviorReactToVoiceCommand::ComputeReactionDirectionFromStream)
+  static VoiceDirectionVote VoteVoiceDirection(const MicDirectionHistory& history,
+                                               EngineTimeStamp_t end_ms,
+                                               TimeStamp_t window_ms,
+                                               MicDirectionConfidence minConfidence,
+                                               bool voiceOnly);
 
   // Most common direction heard in the window [end_ms - window_ms, end_ms], counting only samples whose
   // average confidence is above minConfidence (same vote as the stock trigger word reaction,
@@ -107,6 +130,8 @@ private:
     std::shared_ptr<BehaviorReactToMicDirection> turnBehavior;
     float headAngle_deg;
     float directionWindow_s;
+    float wakeDirectionWindow_s;
+    bool voiceOnly;
     MicDirectionConfidence minDirectionConfidence;
     float eyeHue;
     float eyeSaturation;
@@ -120,6 +145,7 @@ private:
   struct DynamicVariables {
     float listeningStart_s = 0.0f;
     MicDirectionIndex voiceDirection = kMicDirectionUnknown;
+    bool directionFromWakeTime = false;
     bool givingUp = false;
     float giveUpStart_s = 0.0f;
     bool promptShowing = false;
@@ -127,6 +153,7 @@ private:
     bool thinking = false;
   };
 
+  void PickDirectionTowardVoice();
   void TransitionToTurnTowardVoice();
   void TransitionToHoldListening();
   void ShowPrompt();

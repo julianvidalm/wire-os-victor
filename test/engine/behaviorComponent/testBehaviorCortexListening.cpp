@@ -8,7 +8,9 @@
  * after a give-up gesture, or on its timeout, without leaving a post-behavior suggestion behind; a prompt shows a
  * question mark and keeps listening; cortex_thinking switches to a thinking face with the user's eye color until
  * the answer, cortex_listening_end or a longer timeout; the listening eye color is undone on every exit. It picks the voice direction to turn
- * toward from the mic direction history over the wake phrase.
+ * toward from the mic direction history over the wake phrase: the window ends at the robot time of the mic frame
+ * where the cortex heard the wake word (cortex_listening's wake_ts_ms) and counts only voice (VAD active)
+ * samples; without that time it falls back to the window before the intent arrived.
  *
  **/
 
@@ -113,11 +115,35 @@ protected:
 
   // one mic direction sample every 10ms over [begin_ms, end_ms)
   static void AddSamples(MicDirectionHistory& history, TimeStamp_t begin_ms, TimeStamp_t end_ms,
-                         MicDirectionIndex dir, MicDirectionConfidence conf)
+                         MicDirectionIndex dir, MicDirectionConfidence conf, bool isVoice = true)
   {
     for( TimeStamp_t t = begin_ms; t < end_ms; t += 10 ) {
-      history.AddDirectionSample(t, true, dir, conf, dir);
+      history.AddDirectionSample(t, isVoice, dir, conf, dir);
     }
+  }
+
+  // the wake phrase from 3 o'clock (voice) ending 600ms ago, then a longer confident sound from 9 o'clock up to
+  // now: the 2s window before the intent picks 9, the window ending at the wake picks 3. The robot clock runs
+  // kRobotClockOffset_ms behind the engine clock; the latest mic sample (now) maps the two
+  static constexpr TimeStamp_t kRobotClockOffset_ms = 3000;
+  TimeStamp_t AddWakeAtThreeThenSoundAtNine(bool soundIsVoice)
+  {
+    const TimeStamp_t now_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
+    auto& history = _tbf.GetRobot().GetMicComponent().GetMicDirectionHistory();
+    const TimeStamp_t wakeEnd_ms = now_ms - 600;
+    AddSamples( history, wakeEnd_ms - 700, wakeEnd_ms, 3, 2000 );
+    AddSamples( history, wakeEnd_ms, now_ms + 10, 9, 2000, soundIsVoice );
+    history.AddRobotTimeSample( now_ms - kRobotClockOffset_ms, now_ms );
+    return wakeEnd_ms - kRobotClockOffset_ms;
+  }
+
+  void StartListeningAtWake(uint32_t wakeRobotTime_ms)
+  {
+    UserIntent intent = UserIntent::Createcortex_listening(UserIntent_CortexListening{wakeRobotTime_ms});
+    UIC().DevSetUserIntentPending( std::move(intent), UserIntentSource::Voice );
+    Tick(2);
+    ASSERT_TRUE( _behavior->IsActivated() );
+    ASSERT_FALSE( UIC().IsAnyUserIntentPending() );
   }
 
   TestBehaviorFramework _tbf;
@@ -573,6 +599,112 @@ TEST_F(CortexListeningTest, NoConfidentDirectionStillListens)
   Tick();
   EXPECT_FALSE( _behavior->IsActivated() );
   EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::NextIntent );
+}
+
+TEST_F(CortexListeningTest, DirectionWindowEndsAtTheWakeTime)
+{
+  const TimeStamp_t wakeRobotTime_ms = AddWakeAtThreeThenSoundAtNine(true);
+  StartListeningAtWake(wakeRobotTime_ms);
+  EXPECT_TRUE( _behavior->WasLastDirectionFromWakeTime() );
+  EXPECT_EQ( _behavior->GetLastVoiceDirection(), 3 );
+}
+
+TEST_F(CortexListeningTest, WithoutTheWakeTimeVotesBeforeTheIntentAsBefore)
+{
+  // an older cortex sends no wake time (0): the 2s window before the intent, every sample counted
+  AddWakeAtThreeThenSoundAtNine(false);
+  StartListeningAtWake(0);
+  EXPECT_FALSE( _behavior->WasLastDirectionFromWakeTime() );
+  EXPECT_EQ( _behavior->GetLastVoiceDirection(), 9 );
+}
+
+TEST_F(CortexListeningTest, WakeTimeBeforeAnyMicSampleFallsBack)
+{
+  // no mic sample yet: the robot time cannot be placed on the engine clock
+  StartListeningAtWake(12345);
+  EXPECT_FALSE( _behavior->WasLastDirectionFromWakeTime() );
+  EXPECT_EQ( _behavior->GetLastVoiceDirection(), kMicDirectionUnknown );
+}
+
+TEST(CortexListeningVoiceDirection, VoiceOnlyIgnoresSamplesWithoutVoice)
+{
+  MicDirectionHistory history{};
+  // loud confident noise from 9 o'clock without voice, a shorter voice from 3 o'clock
+  for( TimeStamp_t t = 1000; t < 2000; t += 10 ) {
+    const bool isVoice = ( t >= 1600 );
+    const MicDirectionIndex dir = isVoice ? 3 : 9;
+    history.AddDirectionSample(t, isVoice, dir, 5000, dir);
+  }
+  const auto vote = BehaviorCortexListening::VoteVoiceDirection(history, 2000, 1000, 500, true);
+  EXPECT_EQ( vote.direction, 3 );
+  EXPECT_EQ( vote.confidence, 5000 );
+  EXPECT_GT( vote.samples, 0u );
+  // the stock vote counts every sample
+  EXPECT_EQ( BehaviorCortexListening::VoteVoiceDirection(history, 2000, 1000, 500, false).direction, 9 );
+}
+
+TEST(CortexListeningVoiceDirection, VoiceOnlyCountsTheVoicePartOfAMixedNode)
+{
+  MicDirectionHistory history{};
+  // one direction run from 5 o'clock that is mostly not voice, and a voice run from 7 o'clock
+  for( TimeStamp_t t = 1000; t < 1600; t += 10 ) {
+    history.AddDirectionSample(t, (t >= 1500), 5, 2000, 5);
+  }
+  for( TimeStamp_t t = 1600; t < 1900; t += 10 ) {
+    history.AddDirectionSample(t, true, 7, 2000, 7);
+  }
+  EXPECT_EQ( BehaviorCortexListening::VoteVoiceDirection(history, 2000, 1000, 500, true).direction, 7 );
+  EXPECT_EQ( BehaviorCortexListening::VoteVoiceDirection(history, 2000, 1000, 500, false).direction, 5 );
+}
+
+TEST(CortexListeningVoiceDirection, VoiceOnlyUnknownWithoutVoice)
+{
+  MicDirectionHistory history{};
+  for( TimeStamp_t t = 1000; t < 2000; t += 10 ) {
+    history.AddDirectionSample(t, false, 4, 5000, 4);
+  }
+  const auto vote = BehaviorCortexListening::VoteVoiceDirection(history, 2000, 1000, 500, true);
+  EXPECT_EQ( vote.direction, kMicDirectionUnknown );
+  EXPECT_EQ( vote.samples, 0u );
+}
+
+TEST(MicDirectionHistoryRobotTime, MapsRobotTimeOntoTheEngineClock)
+{
+  MicDirectionHistory history{};
+  EngineTimeStamp_t engine_ms = 0;
+  // nothing to map with before the first mic sample
+  EXPECT_FALSE( history.GetEngineTimeAtRobotTime(1000, engine_ms) );
+
+  // the latest mic sample was stamped 50000 by the robot and arrived at engine time 80000
+  history.AddRobotTimeSample(50000, 80000);
+  ASSERT_TRUE( history.GetEngineTimeAtRobotTime(49400, engine_ms) );
+  EXPECT_EQ( (TimeStamp_t)engine_ms, 79400u );
+  // a robot time after the latest sample is clamped to it
+  ASSERT_TRUE( history.GetEngineTimeAtRobotTime(50500, engine_ms) );
+  EXPECT_EQ( (TimeStamp_t)engine_ms, 80000u );
+  // older than the engine clock: not mappable
+  EXPECT_FALSE( history.GetEngineTimeAtRobotTime(50000 - 90000, engine_ms) );
+}
+
+TEST(MicDirectionHistoryRobotTime, AddMicSampleRecordsTheRobotTime)
+{
+  BaseStationTimer::getInstance()->UpdateTime( Util::SecToNanoSec(70.0) );
+  MicDirectionHistory history{};
+  RobotInterface::MicDirection msg;
+  msg.timestamp = 20000;
+  msg.direction = 2;
+  msg.confidence = 3000;
+  msg.selectedDirection = 2;
+  msg.activeState = 1;
+  history.AddMicSample(msg);
+
+  EngineTimeStamp_t engine_ms = 0;
+  ASSERT_TRUE( history.GetEngineTimeAtRobotTime(19000, engine_ms) );
+  EXPECT_EQ( (TimeStamp_t)engine_ms, 69000u );
+  // and the VAD flag of the sample
+  const auto nodes = history.GetRecentHistory(100);
+  ASSERT_FALSE( nodes.empty() );
+  EXPECT_EQ( nodes.back().vadCount, 1u );
 }
 
 } // namespace
