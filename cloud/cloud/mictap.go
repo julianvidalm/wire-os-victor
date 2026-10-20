@@ -3,10 +3,8 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"time"
 
 	"github.com/digital-dream-labs/vector-cloud/internal/config"
-	"github.com/digital-dream-labs/vector-cloud/internal/ipc"
 	"github.com/digital-dream-labs/vector-cloud/internal/log"
 	"github.com/digital-dream-labs/vector-cloud/internal/mictap"
 	mictappb "github.com/digital-dream-labs/vector-cloud/internal/proto/mictap"
@@ -18,11 +16,10 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-// micTapQueueLen holds about 2.5 s of mic frames while an upload (re)connects.
-const micTapQueueLen = 256
-
-// runMicTap forwards vic-anim's MicTap datagrams (mictap_sock) to wire-pod, on the chipper address from
-// server_config.json, over TLS with the trusted roots that include the pinned wire-pod certificate.
+// runMicTap keeps a command link to the cortex (wire-pod), on the chipper address from server_config.json, over
+// TLS with the trusted roots that include the pinned wire-pod certificate. The robot hears its own wake word and
+// streams the voice request to chipper as stock Vector does; the link carries no audio, only the cortex's
+// commands (intents, its voice) and the reports on that voice.
 func runMicTap(process *voice.Process) {
 	esn, err := robot.ReadESN()
 	if err != nil {
@@ -37,14 +34,7 @@ func runMicTap(process *voice.Process) {
 	}
 	defer conn.Close()
 
-	// RunSource reconnects to mictap_sock whenever vic-anim replaces it (MicTap switched off and on, or a
-	// vic-anim restart), which a fixed connection would never notice.
-	queue := make(chan []byte, micTapQueueLen)
-	var queueDropped uint64
-	path := ipc.GetSocketPath("mictap_sock")
-	open := func() (mictap.Conn, error) { return ipc.NewUnixgramClient(path, "cp_mictap") }
 	logf := func(format string, a ...any) { log.Printf(format+"\n", a...) }
-	go mictap.RunSource(context.Background(), open, 5*time.Second, queue, &queueDropped, logf)
 
 	// The cortex's own voice: Command.audio steps go to the engine's external audio stream, never blocking the
 	// Session's receive loop; what happened to each stream goes back upstream on the same Session.
@@ -55,8 +45,8 @@ func runMicTap(process *voice.Process) {
 		}
 	}, logf)
 
-	log.Println("mictap: forwarding to", config.Env.Chipper)
-	mictap.New(mictap.Config{
+	log.Println("mictap: command link to", config.Env.Chipper)
+	mictap.RunLink(context.Background(), mictap.LinkConfig{
 		// a new or closed Session cancels whatever vic-anim plays, so a stream cut off by a vic-cloud restart
 		// or a lost Session never blocks the next one
 		Dial: mictap.ResetOnSession(mictap.NewSessionDialerWithStatus(conn, esn, func(cmd *mictappb.Command) {
@@ -84,5 +74,5 @@ func runMicTap(process *voice.Process) {
 			process.InjectResult(result)
 		}, &reports, logf), audio),
 		Logf: logf,
-	}).Run(context.Background(), queue)
+	})
 }

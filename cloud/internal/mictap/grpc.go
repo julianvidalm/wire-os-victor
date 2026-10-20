@@ -148,6 +148,12 @@ func (s *StatusSender) clear(gs *grpcSession) {
 	s.mu.Unlock()
 }
 
+// Wait returns when the cortex ends the call (or the call fails), with its status.
+func (g *grpcSession) Wait() error {
+	<-g.done
+	return g.err
+}
+
 // CloseAndRecv ends the upload and waits for the cortex to close the call, returning its status.
 func (g *grpcSession) CloseAndRecv() error {
 	g.s.CloseSend()

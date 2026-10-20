@@ -334,6 +334,14 @@ type resetStream struct {
 	p *AudioPlayer
 }
 
+// Wait forwards to the wrapped Session; a Stream without Wait answers errNoSession at once.
+func (r *resetStream) Wait() error {
+	if w, ok := r.Stream.(waiter); ok {
+		return w.Wait()
+	}
+	return errNoSession
+}
+
 func (r *resetStream) CloseAndRecv() error {
 	err := r.Stream.CloseAndRecv()
 	r.p.Reset()
