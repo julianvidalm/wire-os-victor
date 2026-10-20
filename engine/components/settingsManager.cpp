@@ -503,6 +503,22 @@ namespace Anki
       return true;
     }
 
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    void SettingsManager::ShowTemporaryEyeColor(float hue, float saturation)
+    {
+      // the rainbow thread would paint over the temporary color
+      if (_rainbowEyeThread.joinable())
+      {
+        _stopRainbowEyeThread.store(true, std::memory_order_release);
+        _rainbowEyeThread.join();
+        _rainbowEyeThread = std::thread();
+        _stopRainbowEyeThread.store(false, std::memory_order_release);
+      }
+
+      _robot->SendRobotMessage<RobotInterface::SetFaceHue>(hue);
+      _robot->SendRobotMessage<RobotInterface::SetFaceSaturation>(saturation);
+    }
+
     // Wire (kercre123) - Rainbow Eyes
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 

@@ -21,6 +21,9 @@
 #include "engine/aiComponent/behaviorComponent/behaviors/reactions/behaviorReactToMicDirection.h"
 #include "engine/aiComponent/behaviorComponent/userIntentComponent.h"
 #include "engine/audio/engineRobotAudioClient.h"
+#include "engine/components/animationComponent.h"
+#include "engine/components/settingsManager.h"
+#include "coretech/vision/shared/spritePathMap.h"
 #include "engine/components/mics/micComponent.h"
 #include "engine/components/mics/micDirectionHistory.h"
 
@@ -41,9 +44,29 @@ const char* kTurnBehaviorKey = "turnBehavior";
 const char* kHeadAngleKey = "headAngle_deg";
 const char* kDirectionWindowKey = "directionWindow_s";
 const char* kMinDirectionConfidenceKey = "minDirectionConfidence";
+const char* kEyeHueKey = "eyeHue";
+const char* kEyeSaturationKey = "eyeSaturation";
+const char* kPromptSpriteKey = "promptSpriteName";
+const char* kPromptDurationKey = "promptDuration_s";
+const char* kGiveUpAnimKey = "giveUpAnimName";
 
 const char* kDefaultAnimName = "anim_eyepose_curious";
-constexpr float kDefaultTimeout_s = 10.0f;
+constexpr float kDefaultTimeout_s = 15.0f;
+// UNCANNY_YELLOW in eye_color_config.json
+constexpr float kDefaultEyeHue = 0.11f;
+constexpr float kDefaultEyeSaturation = 1.0f;
+// resources/config/sprites/independentSprites/cortex_question_mark.png (no stock question mark sprite exists)
+const char* kDefaultPromptSprite = "cortex_question_mark";
+constexpr float kDefaultPromptDuration_s = 3.0f;
+// the stock "didn't get that" reaction after a wake word (VC_IntentNeutral / ag_vc_wakeword_idk), 1.0s
+const char* kDefaultGiveUpAnim = "anim_wakeword_idk_01";
+// the question mark, centered above the eyes. 18x26 sprite drawn in the eye color
+constexpr int16_t kPromptSpriteX = 83;
+constexpr int16_t kPromptSpriteY = 0;
+constexpr int16_t kPromptSpriteWidth = 18;
+constexpr int16_t kPromptSpriteHeight = 26;
+// the give-up gesture never holds the behavior longer than this, even if its animation never reports done
+constexpr float kMaxGiveUp_s = 3.0f;
 // the stock "hey vector" response (triggerWordDetected.json, BehaviorReactToVoiceCommand)
 constexpr AnimationTrigger kDefaultGetInAnim = AnimationTrigger::VC_ListeningGetIn;
 const char* kDefaultEarCon = "Play__Robot_Vic_Sfx__Wake_Word_On";
@@ -62,6 +85,7 @@ const char* EndReasonToString(BehaviorCortexListening::EndReason reason)
     case BehaviorCortexListening::EndReason::NextIntent:   return "NextIntent";
     case BehaviorCortexListening::EndReason::ListeningEnd: return "ListeningEnd";
     case BehaviorCortexListening::EndReason::StrayEnd:     return "StrayEnd";
+    case BehaviorCortexListening::EndReason::StrayPrompt:  return "StrayPrompt";
     case BehaviorCortexListening::EndReason::Timeout:      return "Timeout";
   }
   return "Unknown";
@@ -112,6 +136,19 @@ BehaviorCortexListening::BehaviorCortexListening(const Json::Value& config)
   int minDirectionConfidence = kDefaultMinDirectionConfidence;
   JsonTools::GetValueOptional(config, kMinDirectionConfidenceKey, minDirectionConfidence);
   _iConfig.minDirectionConfidence = static_cast<MicDirectionConfidence>(minDirectionConfidence);
+
+  _iConfig.eyeHue = kDefaultEyeHue;
+  JsonTools::GetValueOptional(config, kEyeHueKey, _iConfig.eyeHue);
+  _iConfig.eyeSaturation = kDefaultEyeSaturation;
+  JsonTools::GetValueOptional(config, kEyeSaturationKey, _iConfig.eyeSaturation);
+
+  // empty strings disable the question mark or the give-up gesture
+  _iConfig.promptSpriteName = kDefaultPromptSprite;
+  JsonTools::GetValueOptional(config, kPromptSpriteKey, _iConfig.promptSpriteName);
+  _iConfig.promptDuration_s = kDefaultPromptDuration_s;
+  JsonTools::GetValueOptional(config, kPromptDurationKey, _iConfig.promptDuration_s);
+  _iConfig.giveUpAnimName = kDefaultGiveUpAnim;
+  JsonTools::GetValueOptional(config, kGiveUpAnimKey, _iConfig.giveUpAnimName);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -130,6 +167,11 @@ void BehaviorCortexListening::GetBehaviorJsonKeys(std::set<const char*>& expecte
   expectedKeys.insert(kHeadAngleKey);
   expectedKeys.insert(kDirectionWindowKey);
   expectedKeys.insert(kMinDirectionConfidenceKey);
+  expectedKeys.insert(kEyeHueKey);
+  expectedKeys.insert(kEyeSaturationKey);
+  expectedKeys.insert(kPromptSpriteKey);
+  expectedKeys.insert(kPromptDurationKey);
+  expectedKeys.insert(kGiveUpAnimKey);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -228,8 +270,17 @@ void BehaviorCortexListening::OnBehaviorActivated()
     EndListening(EndReason::StrayEnd);
     return;
   }
+  if( uic.IsUserIntentActive(USER_INTENT(cortex_listening_prompt)) ) {
+    // same for a prompt about a capture we are not showing
+    EndListening(EndReason::StrayPrompt);
+    return;
+  }
 
   _dVars.listeningStart_s = GetCurrentTime_s();
+
+  // listening eye color, until the behavior ends by any path (OnBehaviorDeactivated)
+  GetBEI().GetSettingsManager().ShowTemporaryEyeColor(_iConfig.eyeHue, _iConfig.eyeSaturation);
+  _showingListeningEyeColor = true;
 
   // pick the direction before anything moves: the history is relative to the robot's current heading
   const MicDirectionHistory& micHistory = GetBEI().GetMicComponent().GetMicDirectionHistory();
@@ -250,6 +301,22 @@ void BehaviorCortexListening::OnBehaviorActivated()
                         &BehaviorCortexListening::TransitionToTurnTowardVoice);
   } else {
     TransitionToTurnTowardVoice();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorCortexListening::OnBehaviorDeactivated()
+{
+  ClearPrompt();
+  RestoreEyeColor();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorCortexListening::RestoreEyeColor()
+{
+  if( _showingListeningEyeColor ) {
+    GetBEI().GetSettingsManager().RestoreEyeColorSetting();
+    _showingListeningEyeColor = false;
   }
 }
 
@@ -283,6 +350,72 @@ void BehaviorCortexListening::TransitionToHoldListening()
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorCortexListening::ShowPrompt()
+{
+  ++_dVars.numPrompts;
+  if( _iConfig.promptSpriteName.empty() ) {
+    return;
+  }
+
+  // the gesture should be long over; if not, cut it so the face shows the prompt
+  CancelDelegates(false);
+
+  // the listening eye pose with a question mark above the eyes (drawn in the eye color), cleared after a while.
+  // Played straight on the animation component; the next animation (answer, give-up or idle) interrupts it
+  const Vision::SpriteBox box( 100.0f, kPromptSpriteX, kPromptSpriteY, kPromptSpriteWidth, kPromptSpriteHeight,
+                               Vision::SpriteBoxName::SpriteBox_1, Vision::LayerName::Layer_6,
+                               Vision::SpriteRenderMethod::EyeColor, 0 );
+  TimeStamp_t clearTime_ms = static_cast<TimeStamp_t>(std::max(0.0f, _iConfig.promptDuration_s) * 1000.0f);
+  clearTime_ms -= clearTime_ms % ANIM_TIME_STEP_MS;
+  const std::vector<Vision::SpriteBoxKeyFrame> keyFrames = {
+    Vision::SpriteBoxKeyFrame( box, 0, Vision::SpritePathMap::GetAssetID(_iConfig.promptSpriteName),
+                               Vision::SpriteSeqEndType::Hold, 0 ),
+    Vision::SpriteBoxKeyFrame( box, clearTime_ms, Vision::SpritePathMap::kClearSpriteBoxID,
+                               Vision::SpriteSeqEndType::Clear, 0 ),
+  };
+  const Result res = GetBEI().GetAnimationComponent().PlayAnimWithSpriteBoxKeyFrames(_iConfig.animName, keyFrames);
+  _dVars.promptShowing = (res == RESULT_OK);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorCortexListening::ClearPrompt()
+{
+  if( !_dVars.promptShowing ) {
+    return;
+  }
+  _dVars.promptShowing = false;
+
+  // replace the prompt animation with an empty one so the question mark never outlives the listening
+  const Vision::SpriteBox box( 100.0f, kPromptSpriteX, kPromptSpriteY, kPromptSpriteWidth, kPromptSpriteHeight,
+                               Vision::SpriteBoxName::SpriteBox_1, Vision::LayerName::Layer_6,
+                               Vision::SpriteRenderMethod::EyeColor, 0 );
+  const std::vector<Vision::SpriteBoxKeyFrame> keyFrames = {
+    Vision::SpriteBoxKeyFrame( box, 0, Vision::SpritePathMap::kClearSpriteBoxID,
+                               Vision::SpriteSeqEndType::Clear, 0 ),
+  };
+  GetBEI().GetAnimationComponent().PlayAnimWithSpriteBoxKeyFrames("", keyFrames);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorCortexListening::TransitionToGiveUp()
+{
+  // the cortex stopped listening: back to the normal eye color, then the stock "never mind" gesture, then end
+  _dVars.givingUp = true;
+  _dVars.giveUpStart_s = GetCurrentTime_s();
+  CancelDelegates(false);
+  _dVars.promptShowing = false; // the gesture interrupts the prompt animation
+  RestoreEyeColor();
+
+  if( _iConfig.giveUpAnimName.empty() ) {
+    EndListening(EndReason::ListeningEnd);
+    return;
+  }
+  DelegateIfInControl(new PlayAnimationAction(_iConfig.giveUpAnimName), [this]() {
+    EndListening(EndReason::ListeningEnd);
+  });
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 void BehaviorCortexListening::BehaviorUpdate()
 {
   if( !IsActivated() ) {
@@ -291,9 +424,34 @@ void BehaviorCortexListening::BehaviorUpdate()
 
   auto& uic = GetBehaviorComp<UserIntentComponent>();
 
+  if( _dVars.givingUp ) {
+    // ends when the gesture does. Late ends or prompts mean nothing now; the answer or a new wake cut it short
+    // (left pending: a new wake starts listening again from scratch)
+    if( uic.IsUserIntentPending(USER_INTENT(cortex_listening_end)) ) {
+      uic.DropUserIntent(USER_INTENT(cortex_listening_end));
+    }
+    if( uic.IsUserIntentPending(USER_INTENT(cortex_listening_prompt)) ) {
+      uic.DropUserIntent(USER_INTENT(cortex_listening_prompt));
+    }
+    if( uic.IsAnyUserIntentPending() ) {
+      EndListening(EndReason::NextIntent);
+    } else if( GetCurrentTime_s() - _dVars.giveUpStart_s >= kMaxGiveUp_s ) {
+      EndListening(EndReason::ListeningEnd);
+    }
+    return;
+  }
+
   if( uic.IsUserIntentPending(USER_INTENT(cortex_listening_end)) ) {
     uic.DropUserIntent(USER_INTENT(cortex_listening_end));
-    EndListening(EndReason::ListeningEnd);
+    TransitionToGiveUp();
+    return;
+  }
+
+  if( uic.IsUserIntentPending(USER_INTENT(cortex_listening_prompt)) ) {
+    // no speech yet: ask with a question mark and keep listening, with a fresh safety timeout
+    uic.DropUserIntent(USER_INTENT(cortex_listening_prompt));
+    _dVars.listeningStart_s = GetCurrentTime_s();
+    ShowPrompt();
     return;
   }
 
@@ -321,7 +479,7 @@ void BehaviorCortexListening::EndListening(EndReason reason)
   _lastEndReason = reason;
   LOG_INFO("BehaviorCortexListening.EndListening", "%s after %.2fs",
            EndReasonToString(reason),
-           (reason == EndReason::StrayEnd) ? 0.0f : GetCurrentTime_s() - _dVars.listeningStart_s);
+           ((reason == EndReason::StrayEnd) || (reason == EndReason::StrayPrompt)) ? 0.0f : GetCurrentTime_s() - _dVars.listeningStart_s);
   CancelSelf();
 }
 

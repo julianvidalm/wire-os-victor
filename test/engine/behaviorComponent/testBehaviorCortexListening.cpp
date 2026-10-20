@@ -5,7 +5,8 @@
  *
  * Description: Unit tests for the PC cortex listening behavior: it starts on cortex_listening, holds while
  * active, and ends on the next intent (leaving it pending for its own behavior), on cortex_listening_end,
- * or on its timeout, without leaving a post-behavior suggestion behind. It picks the voice direction to turn
+ * after a give-up gesture, or on its timeout, without leaving a post-behavior suggestion behind; a prompt shows a
+ * question mark and keeps listening; the listening eye color is undone on every exit. It picks the voice direction to turn
  * toward from the mic direction history over the wake phrase.
  *
  **/
@@ -85,6 +86,7 @@ protected:
     Tick(2);
     ASSERT_TRUE( _behavior->IsActivated() );
     ASSERT_FALSE( UIC().IsAnyUserIntentPending() );
+    ASSERT_TRUE( _behavior->IsShowingListeningEyeColor() );
     // no other intent arriving: it keeps holding
     Tick(20);
     ASSERT_TRUE( _behavior->IsActivated() );
@@ -126,6 +128,7 @@ TEST_F(CortexListeningTest, EndsOnNextIntentAndLeavesItPending)
   Tick();
   EXPECT_FALSE( _behavior->IsActivated() );
   EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::NextIntent );
+  EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
 
   // the answer is claimed by its own behavior right after, not dropped
   for( int i=0; i<3 && UIC().IsUserIntentPending(USER_INTENT(imperative_lookatme)); ++i ) {
@@ -136,13 +139,28 @@ TEST_F(CortexListeningTest, EndsOnNextIntentAndLeavesItPending)
   EXPECT_TRUE( InStack(BEHAVIOR_ID(LookAtMeVoiceCommand)) );
 }
 
-TEST_F(CortexListeningTest, EndsSilentlyOnListeningEnd)
+TEST_F(CortexListeningTest, ListeningEndPlaysTheGiveUpGestureThenEnds)
 {
   _tbf.GetAIComponent().GetComponent<AIWhiteboard>().ClearPostBehaviorSuggestions();
   StartListening();
 
   UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_end), UserIntentSource::Voice );
   Tick();
+  // consumed; the gesture plays with the user's eye color back
+  EXPECT_FALSE( UIC().IsAnyUserIntentPending() );
+  EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
+  if( _behavior->IsActivated() ) {
+    EXPECT_TRUE( _behavior->IsGivingUp() );
+    // a late prompt or end during the gesture changes nothing
+    UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
+    Tick();
+    EXPECT_EQ( _behavior->GetNumPromptsShown(), 0 );
+    EXPECT_FALSE( UIC().IsAnyUserIntentPending() );
+    // the gesture never holds listening for more than 3s
+    for( int i=0; i<40 && _behavior->IsActivated(); ++i ) {
+      Tick(1, 0.1f);
+    }
+  }
   EXPECT_FALSE( _behavior->IsActivated() );
   EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::ListeningEnd );
   EXPECT_FALSE( UIC().IsAnyUserIntentPending() );
@@ -158,25 +176,110 @@ TEST_F(CortexListeningTest, EndsOnTimeout)
   _tbf.GetAIComponent().GetComponent<AIWhiteboard>().ClearPostBehaviorSuggestions();
   StartListening();
 
-  // the default timeout is 10s; StartListening already spent about 1.1s
-  Tick(1, 8.0f);
+  // the default timeout is 15s; StartListening already spent about 1.1s
+  Tick(1, 13.0f);
   EXPECT_TRUE( _behavior->IsActivated() );
   Tick(1, 1.5f);
   EXPECT_FALSE( _behavior->IsActivated() );
   EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::Timeout );
+  EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
   EXPECT_FALSE( HasAnyPostBehaviorSuggestion() );
 }
 
 TEST_F(CortexListeningTest, RepeatedWakeRestartsTimeout)
 {
   StartListening();
-  Tick(1, 8.0f);
+  Tick(1, 13.0f);
   UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening), UserIntentSource::Voice );
   Tick();
   EXPECT_TRUE( _behavior->IsActivated() );
   EXPECT_FALSE( UIC().IsAnyUserIntentPending() );
   Tick(1, 5.0f);
   EXPECT_TRUE( _behavior->IsActivated() );
+}
+
+TEST_F(CortexListeningTest, PromptKeepsListeningAndRestartsTimeout)
+{
+  StartListening();
+  Tick(1, 13.0f);
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
+  Tick();
+  EXPECT_TRUE( _behavior->IsActivated() );
+  EXPECT_FALSE( UIC().IsAnyUserIntentPending() );
+  EXPECT_FALSE( UIC().WasUserIntentUnclaimed() );
+  EXPECT_EQ( _behavior->GetNumPromptsShown(), 1 );
+  EXPECT_FALSE( _behavior->IsGivingUp() );
+  EXPECT_TRUE( _behavior->IsShowingListeningEyeColor() );
+
+  // fresh safety timeout from the prompt
+  Tick(1, 5.0f);
+  EXPECT_TRUE( _behavior->IsActivated() );
+  Tick(1, 11.0f);
+  EXPECT_FALSE( _behavior->IsActivated() );
+  EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::Timeout );
+  EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
+}
+
+TEST_F(CortexListeningTest, AnswerDuringPromptEndsAndIsClaimedByItsBehavior)
+{
+  StartListening();
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
+  Tick();
+  ASSERT_EQ( _behavior->GetNumPromptsShown(), 1 );
+
+  UIC().DevSetUserIntentPending( USER_INTENT(imperative_lookatme), UserIntentSource::Voice );
+  Tick();
+  EXPECT_FALSE( _behavior->IsActivated() );
+  EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::NextIntent );
+  EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
+  for( int i=0; i<3 && UIC().IsUserIntentPending(USER_INTENT(imperative_lookatme)); ++i ) {
+    Tick();
+  }
+  EXPECT_FALSE( UIC().WasUserIntentUnclaimed() );
+  EXPECT_TRUE( InStack(BEHAVIOR_ID(LookAtMeVoiceCommand)) );
+}
+
+TEST_F(CortexListeningTest, AnswerDuringGiveUpEndsAndIsClaimedByItsBehavior)
+{
+  StartListening();
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_end), UserIntentSource::Voice );
+  Tick();
+  if( !_behavior->IsActivated() ) {
+    // the gesture already finished in this environment; nothing to interrupt
+    return;
+  }
+  ASSERT_TRUE( _behavior->IsGivingUp() );
+
+  UIC().DevSetUserIntentPending( USER_INTENT(imperative_lookatme), UserIntentSource::Voice );
+  Tick();
+  EXPECT_FALSE( _behavior->IsActivated() );
+  EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::NextIntent );
+  for( int i=0; i<3 && UIC().IsUserIntentPending(USER_INTENT(imperative_lookatme)); ++i ) {
+    Tick();
+  }
+  EXPECT_FALSE( UIC().WasUserIntentUnclaimed() );
+}
+
+TEST_F(CortexListeningTest, InterruptionRestoresTheEyeColor)
+{
+  StartListening();
+  // a higher priority behavior takes over the stack
+  _tbf.SetBehaviorStackByName( "highLevelAI_stack" );
+  Tick();
+  EXPECT_FALSE( _behavior->IsActivated() );
+  EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
+}
+
+TEST_F(CortexListeningTest, StrayPromptIsConsumedSilently)
+{
+  ASSERT_FALSE( _behavior->IsActivated() );
+  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_prompt), UserIntentSource::Voice );
+  Tick(3);
+  EXPECT_FALSE( UIC().IsAnyUserIntentPending() );
+  EXPECT_FALSE( UIC().WasUserIntentUnclaimed() );
+  EXPECT_FALSE( _behavior->IsActivated() );
+  EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::StrayPrompt );
+  EXPECT_FALSE( _behavior->IsShowingListeningEyeColor() );
 }
 
 TEST_F(CortexListeningTest, StrayListeningEndIsConsumedSilently)
@@ -247,11 +350,10 @@ TEST_F(CortexListeningTest, PicksTheWakePhraseDirectionOnActivation)
   EXPECT_EQ( _behavior->GetLastVoiceDirection(), 3 );
 
   // the gesture does not change how listening ends
-  UIC().DevSetUserIntentPending( USER_INTENT(cortex_listening_end), UserIntentSource::Voice );
+  UIC().DevSetUserIntentPending( USER_INTENT(imperative_lookatme), UserIntentSource::Voice );
   Tick();
   EXPECT_FALSE( _behavior->IsActivated() );
-  EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::ListeningEnd );
-  EXPECT_FALSE( UIC().IsAnyUserIntentPending() );
+  EXPECT_EQ( _behavior->GetLastEndReason(), EndReason::NextIntent );
 }
 
 TEST_F(CortexListeningTest, NoConfidentDirectionStillListens)

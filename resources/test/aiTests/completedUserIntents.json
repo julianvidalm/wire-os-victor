@@ -63,6 +63,10 @@
       "type": "cortex_listening_end"
     },
 
+    "cortex_listening_prompt": {
+      "type": "cortex_listening_prompt"
+    },
+
     // commented out until the 'GazeDirection' feature is enabled in resources/config/features.json
     //"imperative_lookoverthere": {
     //  "type": "imperative_lookoverthere"
