@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"time"
 
 	"github.com/digital-dream-labs/vector-cloud/internal/config"
 	"github.com/digital-dream-labs/vector-cloud/internal/log"
@@ -46,7 +47,9 @@ func runMicTap(process *voice.Process) {
 	}, logf)
 
 	log.Println("mictap: command link to", config.Env.Chipper)
+	// a wire-pod restart is noticed within 10 s; commands sent before the robot redials are lost
 	mictap.RunLink(context.Background(), mictap.LinkConfig{
+		MaxBackoff: 10 * time.Second,
 		// a new or closed Session cancels whatever vic-anim plays, so a stream cut off by a vic-cloud restart
 		// or a lost Session never blocks the next one
 		Dial: mictap.ResetOnSession(mictap.NewSessionDialerWithStatus(conn, esn, func(cmd *mictappb.Command) {
