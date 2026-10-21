@@ -15,7 +15,6 @@
     "TakeAPhotoCoordinator",
     "ReactToRobotShaken",
     "ReactToTouchPetting",
-    "CortexListening", // silent listening face while the PC cortex captures speech
     "SimpleVoiceResponses", // these are simple voice commands that we want to ignore obstacles
     "ReactToObstacle",
     "SingletonPounceDispatcher",

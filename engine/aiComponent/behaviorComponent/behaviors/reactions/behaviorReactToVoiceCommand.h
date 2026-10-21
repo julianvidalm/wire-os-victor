@@ -25,6 +25,7 @@ namespace Vector {
 
 class BehaviorReactToMicDirection;
 class ConditionUserIntentPending;
+class MicDirectionHistory;
 enum class AnimationTrigger : int32_t;
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -60,6 +61,24 @@ public:
                          const AnimationTrigger& listeningGetOut);
   
   void ResetListeningAnimsToConfig();
+
+  struct VoiceDirectionVote {
+    MicDirectionIndex direction = kMicDirectionUnknown;
+    // average SignalEssence confidence of the winning direction's counted samples
+    MicDirectionConfidence confidence = 0;
+    // samples counted for the winning direction (10 ms each)
+    uint32_t samples = 0;
+  };
+
+  // Most common direction heard in the window [end_ms - window_ms, end_ms], counting only samples whose
+  // average confidence is above minConfidence and, with voiceOnly, only samples with voice activity (VAD).
+  // Without voiceOnly it is the same vote as ComputeReactionDirectionFromStream. The listening feedback votes
+  // with voiceOnly over the wake phrase to turn toward the speaker.
+  static VoiceDirectionVote VoteVoiceDirection(const MicDirectionHistory& history,
+                                               EngineTimeStamp_t end_ms,
+                                               TimeStamp_t window_ms,
+                                               MicDirectionConfidence minConfidence,
+                                               bool voiceOnly);
 
 protected:
 

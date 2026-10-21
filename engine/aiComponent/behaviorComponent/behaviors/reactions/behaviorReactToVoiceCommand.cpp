@@ -26,7 +26,6 @@
 #include "engine/aiComponent/behaviorComponent/behaviorContainer.h"
 #include "engine/aiComponent/behaviorComponent/behaviorExternalInterface/behaviorExternalInterface.h"
 #include "engine/aiComponent/behaviorComponent/behaviorExternalInterface/beiRobotInfo.h"
-#include "engine/aiComponent/behaviorComponent/behaviors/reactions/behaviorCortexListening.h"
 #include "engine/aiComponent/behaviorComponent/behaviors/reactions/behaviorReactToMicDirection.h"
 #include "engine/aiComponent/behaviorComponent/userIntentComponent.h"
 #include "engine/aiComponent/behaviorComponent/userIntentData.h"
@@ -51,6 +50,9 @@
 #include "clad/types/behaviorComponent/behaviorClasses.h"
 
 #include "coretech/common/engine/utils/timer.h"
+
+#include <array>
+#include <vector>
 
 
 #define DEBUG_TRIGGER_WORD_VERBOSE 0 // add some verbose debugging if trying to track down issues
@@ -1396,6 +1398,68 @@ namespace {
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+BehaviorReactToVoiceCommand::VoiceDirectionVote
+BehaviorReactToVoiceCommand::VoteVoiceDirection(const MicDirectionHistory& history,
+                                                EngineTimeStamp_t end_ms,
+                                                TimeStamp_t window_ms,
+                                                MicDirectionConfidence minConfidence,
+                                                bool voiceOnly)
+{
+  VoiceDirectionVote vote;
+  if( window_ms == 0 ) {
+    return vote;
+  }
+
+  const EngineTimeStamp_t begin_ms = ( (TimeStamp_t)end_ms > window_ms ) ? EngineTimeStamp_t((TimeStamp_t)end_ms - window_ms)
+                                                                              : EngineTimeStamp_t(0);
+  MicDirectionNodeList list = history.GetHistoryAtTime(end_ms, window_ms);
+
+  // only count the part of the first and last nodes that falls inside the window
+  std::vector<double> share(list.size(), 1.0);
+  if( list.size() > 1 ) {
+    const MicDirectionNode& front = list.front();
+    if( (front.timestampBegin < begin_ms) && (front.timestampEnd > front.timestampBegin) ) {
+      const double nodeDuration = TimeStamp_t(front.timestampEnd - front.timestampBegin);
+      const double timeInNode = (front.timestampEnd > begin_ms) ? TimeStamp_t(front.timestampEnd - begin_ms) : 0;
+      share.front() = timeInNode / nodeDuration;
+    }
+
+    const MicDirectionNode& back = list.back();
+    if( (back.timestampEnd > end_ms) && (back.timestampEnd > back.timestampBegin) ) {
+      const double nodeDuration = TimeStamp_t(back.timestampEnd - back.timestampBegin);
+      const double timeInNode = (end_ms > back.timestampBegin) ? TimeStamp_t(end_ms - back.timestampBegin) : 0;
+      share.back() = timeInNode / nodeDuration;
+    }
+  }
+
+  std::array<uint32_t, kNumMicDirections + 1> counts{};
+  std::array<double, kNumMicDirections + 1> confidenceSums{};
+  size_t i = 0;
+  for( const auto& node : list ) {
+    const double nodeShare = share[i++];
+    if( (node.directionIndex <= kMicDirectionUnknown) && (node.confidenceAvg > minConfidence) ) {
+      // a direction run can mix voice and other sound; its voice samples are spread evenly over it
+      const uint32_t counted = static_cast<uint32_t>( (voiceOnly ? node.vadCount : node.count) * nodeShare );
+      counts[node.directionIndex] += counted;
+      confidenceSums[node.directionIndex] += static_cast<double>(node.confidenceAvg) * counted;
+    }
+  }
+
+  uint32_t bestCount = 0;
+  for( MicDirectionIndex dir = kFirstMicDirectionIndex; dir < kNumMicDirections; ++dir ) {
+    if( counts[dir] > bestCount ) {
+      vote.direction = dir;
+      bestCount = counts[dir];
+    }
+  }
+  if( vote.direction != kMicDirectionUnknown ) {
+    vote.samples = bestCount;
+    vote.confidence = static_cast<MicDirectionConfidence>( confidenceSums[vote.direction] / bestCount );
+  }
+  return vote;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 void BehaviorReactToVoiceCommand::PickWakeDirection()
 {
   const auto& fb = _iVars.feedback;
@@ -1403,10 +1467,9 @@ void BehaviorReactToVoiceCommand::PickWakeDirection()
   const EngineTimeStamp_t now_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
   const TimeStamp_t window_ms = static_cast<TimeStamp_t>( std::max(0.0f, fb.wakeDirectionWindow_s) * 1000.0f );
 
-  // the dominant direction over the wake phrase, counting only samples with voice activity (the cortex
-  // listening reaction's vote). Fallbacks: the trigger word's own direction, then the latest direction
-  const auto vote = BehaviorCortexListening::VoteVoiceDirection( micHistory, now_ms, window_ms,
-                                                                 fb.minDirectionConfidence, true );
+  // the dominant direction over the wake phrase, counting only samples with voice activity.
+  // Fallbacks: the trigger word's own direction, then the latest direction
+  const auto vote = VoteVoiceDirection( micHistory, now_ms, window_ms, fb.minDirectionConfidence, true );
   const char* source = "wake_vote";
   MicDirectionIndex direction = vote.direction;
   if( kMicDirectionUnknown == direction ) {

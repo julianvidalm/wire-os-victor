@@ -32,15 +32,6 @@ structure UserIntent_TimeInSeconds
   uint_32 time_s
 }
 
-// the PC cortex heard its wake word
-structure UserIntent_CortexListening
-{
-  // robot time (ms, the clock of the MicTap frames and the MicDirection messages) of the mic frame where the
-  // cortex detected the wake word, i.e. the end of the wake phrase; 0 if unknown. The listening behavior votes
-  // the turn direction over the phrase ending there
-  uint_32 wake_ts_ms = 0
-}
-
 structure UserIntent_WeatherResponse
 {
   string  speakableLocationString,
@@ -142,10 +133,6 @@ union dupes_allowed UserIntent
   UserIntent_Void             blackjack_playagain,
   UserIntent_Void             character_age,
   UserIntent_Void             check_timer,
-  UserIntent_CortexListening  cortex_listening,
-  UserIntent_Void             cortex_listening_end,
-  UserIntent_Void             cortex_listening_prompt,
-  UserIntent_Void             cortex_thinking,
   UserIntent_EyeColor         imperative_eyecolor_specific,
   UserIntent_Void             imperative_eyecolor,
   UserIntent_Void             explore_start,
