@@ -26,7 +26,6 @@
 #include "cozmoAnim/micData/micDataInfo.h"
 #include "cozmoAnim/micData/micDataProcessor.h"
 #include "cozmoAnim/micData/micDataSystem.h"
-#include "cozmoAnim/micData/micTap.h"
 #include "cozmoAnim/showAudioStreamStateManager.h"
 
 #include "audioEngine/plugins/ankiPluginInterface.h"
@@ -158,15 +157,6 @@ void MicDataSystem::Init(const Anim::RobotDataLoader& dataLoader)
   };
   _speechRecognizerSystem->InitVector(callback);
 
-  // The tap must exist before the processing threads start (they call it for every block)
-  AudioEngine::PlugIns::AkAlsaSinkPlugIn* sinkPlugIn = nullptr;
-  if (const auto* audioController = _context->GetAudioController()) {
-    if (const auto* pluginInterface = audioController->GetPluginInterface()) {
-      sinkPlugIn = pluginInterface->GetAlsaSinkPlugIn();
-    }
-  }
-  _micTap.reset(new MicTap(sinkPlugIn, _persistentFolder));
-
   _micDataProcessor->Init();
   
   if( Util::FileUtils::FileExists(_persistentFolder + kMicSettingsFile) ) {
@@ -188,8 +178,6 @@ MicDataSystem::~MicDataSystem()
 {
   // Tear down the mic data processor explicitly first, because it uses functionality owned by MicDataSystem
   _micDataProcessor.reset();
-  // After the processor: its threads feed the tap until they are joined
-  _micTap.reset();
 
   _udpServer->StopListening();
 }
