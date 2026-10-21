@@ -187,6 +187,8 @@ private:
   
   std::atomic<uint32_t> _speakerLatency_ms{0};
   std::atomic<bool>     _externalAudioPlaying{false};
+  // steady clock ms when the current external audio started playing
+  std::atomic<int64_t>  _externalAudioStart_ms{0};
   // steady clock ms when the latest external audio stopped playing (0 = never)
   std::atomic<int64_t>  _externalAudioEnd_ms{0};
   

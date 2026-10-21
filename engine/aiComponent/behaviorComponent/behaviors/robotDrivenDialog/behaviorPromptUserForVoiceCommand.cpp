@@ -346,7 +346,9 @@ void BehaviorPromptUserForVoiceCommand::TransitionToThinking()
     Audio::EngineRobotAudioClient& rac = GetBEI().GetRobotAudioClient();
 
     if(EIntentStatus::IntentHeard == _dVars.intentStatus){
-      if(AudioMetaData::GameEvent::GenericEvent::Invalid != _iConfig.earConSuccess){
+      // the "understood" chime is off by default like on every voice request (VoiceRequest console var)
+      if(UserIntentComponent::PlaysVoiceRequestSuccessEarcon() &&
+         AudioMetaData::GameEvent::GenericEvent::Invalid != _iConfig.earConSuccess){
         rac.PostEvent(_iConfig.earConSuccess, AudioMetaData::GameObjectType::Behavior);
       }
     } else {

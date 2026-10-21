@@ -60,6 +60,9 @@ CONSOLE_VAR(bool, kSuppressTriggerResponse, RECOGNIZER_CONSOLE_GROUP, false);
 const std::string kMicSettingsFile = "micMuted";
 // voice triggers stay suppressed this long (plus the speaker latency) after external audio stops playing
 constexpr int64_t kExternalAudioTriggerTail_ms = 1000;
+// A stream whose completion never arrives (a very short stream, a lost message) stops suppressing voice triggers
+// after this long, the longest external voice the knowledge graph waits for
+constexpr int64_t kExternalAudioMaxSuppress_ms = 60000;
 const std::string kSpeechRecognizerWebvizName = "speechrecognizersys";
 }
 
@@ -841,6 +844,9 @@ namespace {
 void MicDataSystem::SetExternalAudioPlaying(bool playing)
 {
   const bool wasPlaying = _externalAudioPlaying.exchange(playing);
+  if (!wasPlaying && playing) {
+    _externalAudioStart_ms = SteadyNow_ms();
+  }
   if (wasPlaying && !playing) {
     _externalAudioEnd_ms = SteadyNow_ms();
   }
@@ -859,7 +865,7 @@ bool MicDataSystem::IsVoiceTriggerSuppressedByExternalAudio(uint32_t& out_msSinc
 {
   out_msSinceEnd = 0;
   if (_externalAudioPlaying) {
-    return true;
+    return (SteadyNow_ms() - _externalAudioStart_ms) < kExternalAudioMaxSuppress_ms;
   }
   const int64_t end_ms = _externalAudioEnd_ms;
   if (end_ms == 0) {
