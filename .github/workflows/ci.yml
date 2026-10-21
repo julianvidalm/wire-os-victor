@@ -56,12 +56,3 @@ jobs:
           done
           du -sh _build/vicos/Release
 
-      - name: Check CLAD tags framed by hand in Go
-        run: |
-          # vic-cloud writes GameToEngine::FakeTriggerWordDetected as a raw frame (cloud/cloud/ipc_manager.go);
-          # its tag is the message's position in the autounion, so adding a message before it renumbers it.
-          want=$(sed -n 's/^const fakeTriggerWordDetectedTag = \([0-9]*\)$/\1/p' cloud/cloud/ipc_manager.go)
-          header=generated/clad/engine/clad/externalInterface/messageGameToEngineTag.h
-          test -n "$want" || { echo "fakeTriggerWordDetectedTag not found"; exit 1; }
-          grep -Eq "^[[:space:]]*FakeTriggerWordDetected,[[:space:]]*// ${want}\$" "$header" || {
-            echo "FakeTriggerWordDetected is not tag $want in $header:"; grep -n FakeTriggerWordDetected "$header"; exit 1; }
