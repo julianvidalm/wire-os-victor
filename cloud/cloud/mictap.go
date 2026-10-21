@@ -58,15 +58,6 @@ func runMicTap(process *voice.Process) {
 				audio.Handle(a)
 				return
 			}
-			// The cortex heard Vector's name: wake up as if "Hey Vector" was heard. The robot's voice request
-			// that follows is answered by the cortex with the sentence it already transcribed.
-			if cmd.GetWake() != nil {
-				logf("mictap: cortex wake")
-				if err := engineCladManager.SendFakeTriggerWord(); err != nil {
-					logf("mictap: cannot wake: %v", err)
-				}
-				return
-			}
 			// The cortex answers what it heard: deliver it to the engine like a chipper response.
 			result, err := mictap.CommandToIntent(cmd)
 			if err != nil {

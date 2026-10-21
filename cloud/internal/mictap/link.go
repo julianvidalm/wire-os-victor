@@ -1,3 +1,7 @@
+// Package mictap keeps the command link between vic-cloud and the cortex (wire-pod's MicTap service): one
+// Session the robot opens and keeps open, carrying the cortex's commands (intents, knowledge answers, its voice)
+// down and the audio status reports up. No mic audio goes over it: the robot hears its own wake word and
+// streams the voice request to chipper as stock Vector does.
 package mictap
 
 import (
@@ -8,6 +12,17 @@ import (
 
 // healthySession is how long a Session must stay open to reset the redial backoff.
 const healthySession = 10 * time.Second
+
+// Stream is one call to the cortex: a Session (NewSessionDialer) or, against an older cortex without
+// Session, a Stream upload.
+type Stream interface {
+	Send(chunk []byte) error
+	// CloseAndRecv ends the call and returns the server's status.
+	CloseAndRecv() error
+}
+
+// Dialer opens one call to the cortex.
+type Dialer func(ctx context.Context) (Stream, error)
 
 // LinkConfig configures RunLink.
 type LinkConfig struct {

@@ -17,7 +17,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -509,25 +508,6 @@ func (manager *EngineCladIpcManager) Write(msg *gw_clad.MessageExternalToRobot) 
 		log.Printf("%T: writing '%#v' CLAD message to Engine\n", *manager, *msg)
 	}
 	return manager.conn.Write(buf.Bytes())
-}
-
-// fakeTriggerWordDetectedTag is GameToEngine::FakeTriggerWordDetected, numbered by its position in the
-// engine's autounion (clad/src/clad/externalInterface/messageGameToEngine.clad); the firmware CI checks it
-// against the generated messageGameToEngineTag.h.
-const fakeTriggerWordDetectedTag = 126
-
-// SendFakeTriggerWord wakes the robot as if it had heard "Hey Vector", through the same non-dev path as a
-// backpack-button press: get-in animation, earcon, then the robot's normal voice request. The engine's gateway
-// socket accepts any MessageGameToEngine, but this message is not part of the Go gateway CLAD, so it is framed
-// here: u16 little-endian size, then the tag (the message has no fields).
-func (manager *EngineCladIpcManager) SendFakeTriggerWord() error {
-	manager.connMutex.Lock()
-	defer manager.connMutex.Unlock()
-	if manager.conn == nil {
-		return errors.New("not connected to the engine")
-	}
-	_, err := manager.conn.Write([]byte{0x01, 0x00, fakeTriggerWordDetectedTag})
-	return err
 }
 
 // deleteListenerUnsafe is "unsafe" in that it requires the calling function to have already acquired the
