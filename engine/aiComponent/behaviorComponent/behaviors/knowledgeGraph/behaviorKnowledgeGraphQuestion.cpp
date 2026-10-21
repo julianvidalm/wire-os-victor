@@ -166,7 +166,7 @@ namespace Anki
 
       if (IsExternalVoiceAnswer())
       {
-        // the cortex already thought (CortexListening's thinking face) and speaks the answer itself: straight
+        // the cortex already thought (ReactToVoiceCommand's thinking face) and speaks the answer itself: straight
         // to the talking face, no get-in, searching loop, earcon or robot TTS
         TransitionToExternalVoice();
         return;

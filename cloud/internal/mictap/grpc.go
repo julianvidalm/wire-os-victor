@@ -99,7 +99,7 @@ type grpcSession struct {
 	done chan struct{}
 	err  error // set before done is closed
 
-	sendMu sync.Mutex // gRPC allows one sender at a time: the forwarder and the audio status reports
+	sendMu sync.Mutex // gRPC allows one sender at a time: the link and the audio status reports
 }
 
 func (g *grpcSession) Send(chunk []byte) error {
