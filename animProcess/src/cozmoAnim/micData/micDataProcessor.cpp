@@ -25,7 +25,6 @@
 #include "cozmoAnim/micData/micDataSystem.h"
 #include "cozmoAnim/micData/micDataInfo.h"
 #include "cozmoAnim/micData/micImmediateDirection.h"
-#include "cozmoAnim/micData/micTap.h"
 #include "cozmoAnim/showAudioStreamStateManager.h"
 #include "cozmoAnim/speechRecognizer/speechRecognizerSystem.h"
 #include "audioUtil/speechRecognizer.h"
@@ -34,6 +33,7 @@
 #include "util/cpuProfiler/cpuProfiler.h"
 #include "util/fileUtils/fileUtils.h"
 #include "util/helpers/ankiDefines.h"
+#include "util/logging/DAS.h"
 #include "util/logging/logging.h"
 #include "util/math/math.h"
 #include "util/threading/threadPriority.h"
@@ -186,6 +186,21 @@ void MicDataProcessor::GetLatestMicDirectionData(MicDirectionData& out_lastSampl
 void MicDataProcessor::TriggerWordDetectCallback(TriggerWordDetectSource source,
                                                  const AudioUtil::SpeechRecognizerCallbackInfo& info)
 {
+  // The robot's own voice while external (SDK) audio plays, e.g. the PC cortex saying "I'm Vector", must not
+  // wake it: no response and no stream. The backpack button still works
+  uint32_t msSinceExternalAudioEnd = 0;
+  if ((source == TriggerWordDetectSource::Voice) &&
+      _micDataSystem->IsVoiceTriggerSuppressedByExternalAudio(msSinceExternalAudioEnd))
+  {
+    DASMSG( trigger_suppressed_external_audio, "mic_data_system.trigger_suppressed_external_audio",
+            "Voice trigger ignored because external (SDK) audio is playing on the speaker, or just stopped" );
+    DASMSG_SET( s1, info.result.c_str(), "Recognized result" );
+    DASMSG_SET( s3, std::to_string(info.score).c_str(), "Recognizer Score" );
+    DASMSG_SET( i1, static_cast<int>(msSinceExternalAudioEnd), "Milliseconds since it stopped, 0 while playing" );
+    DASMSG_SEND();
+    return;
+  }
+
   ShowAudioStreamStateManager* showStreamState = _context->GetShowAudioStreamStateManager();
   // Ignore extra triggers during streaming
   if (_micDataSystem->HasStreamingJob() || !showStreamState->HasValidTriggerResponse())
@@ -419,11 +434,6 @@ void MicDataProcessor::ProcessRawAudio(RobotTimeStamp_t timestamp,
     nextSample.audioBlock.data(),
     robotStatus,
     robotAngle);
-
-  // ProcessMicrophonesSE just refreshed both noise flags for this block
-  if (MicTap* micTap = _micDataSystem->GetMicTap()) {
-    micTap->OnMicBlock(timestamp, nextSample.audioBlock.data(), _isSpeakerActive, _robotWasMoving);
-  }
 
 #ifdef STANDALONE_SIM
   // assume in front of robot if sim

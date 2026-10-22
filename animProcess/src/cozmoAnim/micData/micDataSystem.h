@@ -27,6 +27,7 @@
 #include "clad/robotInterface/messageRobotToEngine.h"
 #include "clad/types/beatDetectorTypes.h"
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <list>
@@ -47,7 +48,6 @@ namespace Anki {
     namespace MicData {
       class MicDataInfo;
       class MicDataProcessor;
-      class MicTap;
     }
     namespace Anim {
       class RobotDataLoader;
@@ -82,8 +82,6 @@ public:
   void Init(const Anim::RobotDataLoader& dataLoader);
 
   MicData::MicDataProcessor* GetMicDataProcessor() const { return _micDataProcessor.get(); }
-  // Created in Init() before the mic processing threads start and destroyed after they stop
-  MicData::MicTap* GetMicTap() const { return _micTap.get(); }
   SpeechRecognizerSystem* GetSpeechRecognizerSystem() const { return _speechRecognizerSystem.get(); }
   
   void ProcessMicDataPayload(const RobotInterface::MicData& payload);
@@ -122,6 +120,13 @@ public:
   void UpdateTimeZone(const std::string& newTimeZone);
   
   bool IsSpeakerPlayingAudio() const;
+
+  // External (SDK) audio, e.g. the PC cortex voice streamed to the robot, is playing on the speaker (from its
+  // prepare until it completes, is cancelled or fails). Main thread
+  void SetExternalAudioPlaying(bool playing);
+  // While external audio plays and for a short tail after it, the robot's own speech can contain "hey vector":
+  // voice triggers are not recognized (the backpack button still is). Any thread
+  bool IsVoiceTriggerSuppressedByExternalAudio(uint32_t& out_msSinceEnd) const;
   
   // Get the maximum speaker 'latency', which is the max delay between when we
   // command audio to be played and it actually gets played on the speaker
@@ -173,7 +178,6 @@ private:
   std::string _timeZone = "";
 
   std::unique_ptr<MicDataProcessor>       _micDataProcessor;
-  std::unique_ptr<MicTap>                 _micTap;
   std::unique_ptr<SpeechRecognizerSystem> _speechRecognizerSystem;
   std::unique_ptr<LocalUdpServer>         _udpServer;
 
@@ -182,6 +186,11 @@ private:
 #endif
   
   std::atomic<uint32_t> _speakerLatency_ms{0};
+  std::atomic<bool>     _externalAudioPlaying{false};
+  // steady clock ms when the current external audio started playing
+  std::atomic<int64_t>  _externalAudioStart_ms{0};
+  // steady clock ms when the latest external audio stopped playing (0 = never)
+  std::atomic<int64_t>  _externalAudioEnd_ms{0};
   
   RobotInterface::MicDirection _latestMicDirectionMsg;
   

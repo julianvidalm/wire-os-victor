@@ -15,6 +15,11 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
+// MicTap v1 bytes used as opaque upload payloads
+var hello1 = append([]byte("VMT1"), 1, 0, 0x80, 0x3e, 0, 0, 0, 0x7d, 0, 0, 0, 0) // v1, 16000, 32000
+
+func frame(seq byte) []byte { return []byte{1, 0, 0, 0, seq, 0, 0, 0} }
+
 // recordingServer is a stand-in for wire-pod's MicTap service.
 type recordingServer struct {
 	pb.UnimplementedMicTapServer

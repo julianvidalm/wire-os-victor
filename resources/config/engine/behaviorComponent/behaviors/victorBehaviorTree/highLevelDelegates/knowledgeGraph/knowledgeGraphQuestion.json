@@ -12,7 +12,13 @@
 
   "readyStringID"           : "BehaviorKnowledgeGraphQuestion.Ready",
   "streamingTimeout"        : 10.0,
-  "earConAudioEventEnd"     : "Play__Robot_Vic_Sfx__Wake_Word_Success",
+
+  // external voice (the PC cortex streams the spoken answer): the talking face waits for the end of the stream,
+  // at most this margin past the expected end or the last chunk, this long for a first chunk when the length is
+  // unknown, and never longer than the cap
+  "externalVoiceMargin_s"     : 3.0,
+  "externalVoiceFirstAudio_s" : 5.0,
+  "externalVoiceMax_s"        : 60.0,
 
   "postBehaviorSuggestion": "Socialize"
 }

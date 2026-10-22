@@ -18,10 +18,103 @@ service MicTap {
   // Stream carries the MicTap v1 byte stream (one hello, then frames), split into chunks at any byte boundary.
   // The robot sends its ESN in the "x-vector-esn" request metadata. The server answers when the stream ends.
   rpc Stream(stream Chunk) returns (StreamSummary);
+
+  // Session is Stream plus a way back: the robot sends the same chunks, and the cortex sends commands for the
+  // robot to carry out (the answer to something it heard). The robot keeps the call open while MicTap runs,
+  // so the cortex never has to connect to the robot. Robots fall back to Stream when Session is unimplemented.
+  rpc Session(stream Chunk) returns (stream Command);
+}
+
+// Command is something the robot should do now.
+message Command {
+  oneof command {
+    // A chipper-style intent result, delivered to the engine as if it answered the robot's own voice request
+    // (for example intent_clock_time).
+    IntentResult intent_result = 1;
+    // Text for Vector to say, with its knowledge-graph animations.
+    KnowledgeResponse knowledge = 2;
+    // Wake up as if the user had said "Hey Vector" (or pressed the backpack button): get-in animation,
+    // earcon, then the robot's normal voice request, which the cortex answers with what it already heard.
+    Wake wake = 3;
+    // A step of an audio stream for Vector's speaker (the cortex's own voice), played through the engine's
+    // external audio stream (the SDK's ExternalAudioStream*). One stream plays at a time.
+    Audio audio = 4;
+  }
+}
+
+message Wake {}
+
+message IntentResult {
+  string intent = 1;
+  string parameters_json = 2;
+  string metadata = 3;
+}
+
+message KnowledgeResponse {
+  string answer = 1;
+  string query_text = 2;
+  // The cortex speaks the answer itself as an Audio stream: the robot shows its talking face until that stream
+  // ends but does not speak answer with its own voice. Without it, the robot speaks answer (the fallback).
+  bool external_voice = 3;
+  // Expected length of that audio in ms, 0 if unknown; the robot gives up waiting for the stream after it
+  // (plus a margin, extended while chunks keep arriving).
+  uint32 expected_duration_ms = 4;
+}
+
+// Audio is one step of an audio stream. Steps of a stream other than the current one are ignored; a prepare
+// with a new stream_id cancels the current stream first.
+message Audio {
+  uint32 stream_id = 1;
+  oneof step {
+    AudioPrepare prepare = 2;
+    AudioChunk chunk = 3;
+    AudioComplete complete = 4;
+    AudioCancel cancel = 5;
+  }
+}
+
+message AudioPrepare {
+  // 8000-16025 Hz (vic-anim's limits); the cortex sends 16000.
+  uint32 sample_rate = 1;
+  // 1-100 (SDK playback volume, under the robot's master volume); 0 means 100.
+  uint32 volume = 2;
+  // Informational (logged): the engine's timeout comes from KnowledgeResponse.expected_duration_ms.
+  uint32 expected_duration_ms = 3;
+}
+
+message AudioChunk {
+  // Signed 16-bit little-endian mono PCM, at most 1024 bytes (the engine's limit), an even number of bytes.
+  bytes samples = 1;
+}
+
+message AudioComplete {}
+
+message AudioCancel {}
+
+// AudioStatus reports what happened to an audio stream, sent upstream in a Chunk with no data.
+message AudioStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    // The prepare reached the engine (vic-anim starts playing after 0.2 s of audio).
+    STARTED = 1;
+    // Playback finished (engine).
+    COMPLETED = 2;
+    // Cancelled by the cortex or replaced by a new stream (robot).
+    CANCELLED = 3;
+    // The engine could not prepare, post or add the audio, or a step was invalid.
+    FAILED = 4;
+    // Audio arrived faster than it plays: the robot's queue or vic-anim's buffer overflowed; the stream is
+    // cancelled.
+    OVERFLOW = 5;
+  }
+  uint32 stream_id = 1;
+  State state = 2;
 }
 
 message Chunk {
   bytes data = 1;
+  // Set, with empty data, when the robot reports on an Audio stream. Older cortexes skip empty chunks.
+  AudioStatus audio_status = 2;
 }
 
 message StreamSummary {

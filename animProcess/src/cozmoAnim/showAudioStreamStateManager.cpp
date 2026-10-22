@@ -19,9 +19,14 @@
 #include "cozmoAnim/robotDataLoader.h"
 
 #include "audioEngine/audioTypeTranslator.h"
+#include "util/console/consoleInterface.h"
 
 namespace{
 const int32_t kUseDefaultStreamingDuration = -1;
+// v3ctor: a voice request (wake word or backpack button) makes no wake chime; the get-in animation's own sounds
+// still play. The response's earcon event still marks a valid trigger response and the stream opens at once
+// instead of after the chime. true brings back the stock wake chime (e.g. Wake_Word_On)
+CONSOLE_VAR(bool, kVoiceRequestWakeEarcon, "VoiceRequest", false);
 }
 
 namespace Anki {
@@ -127,6 +132,14 @@ void ShowAudioStreamStateManager::StartTriggerResponseWithoutGetIn(OnTriggerAudi
   if(!HasValidTriggerResponse()){
     if(callback){
       callback(false);
+    }
+    return;
+  }
+
+  if (!kVoiceRequestWakeEarcon) {
+    // silent: the earcon is "done" at once, so the stream opens without the chime
+    if (callback) {
+      callback(true);
     }
     return;
   }

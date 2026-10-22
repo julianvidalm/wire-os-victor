@@ -104,6 +104,11 @@ public:
 
   void ApplyAllCurrentSettings();
 
+  // Shows an eye color for a while without touching the eye color setting (stops rainbow eyes meanwhile).
+  // RestoreEyeColorSetting puts the user's setting back
+  void ShowTemporaryEyeColor(float hue, float saturation);
+  bool RestoreEyeColorSetting() { return ApplySettingEyeColor(); }
+
 private:
 
   bool ApplyRobotSetting(const external_interface::RobotSetting robotSetting, bool force = true);

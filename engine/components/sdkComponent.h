@@ -78,6 +78,10 @@ public:
   void HandleMessage(const T& msg);
   void EnableCameraAutoExposure(bool enable = true);
 
+  // Stops the external audio stream playing on the robot (the cortex's voice), e.g. when the behavior showing
+  // its talking face is interrupted
+  void CancelExternalAudio();
+
 private:
 
   Robot* _robot = nullptr;  

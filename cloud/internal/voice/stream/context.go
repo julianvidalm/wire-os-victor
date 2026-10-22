@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/digital-dream-labs/vector-cloud/internal/clad/cloud"
@@ -143,7 +144,7 @@ func sendIntentResponse(resp *chipper.IntentResult, receiver Receiver) {
 	var buf bytes.Buffer
 	if resp.Parameters != nil && len(resp.Parameters) > 0 {
 		encoder := json.NewEncoder(&buf)
-		if err := encoder.Encode(resp.Parameters); err != nil {
+		if err := encoder.Encode(typedParameters(resp.Action, resp.Parameters)); err != nil {
 			log.Println("JSON encode error:", err)
 			receiver.OnError(cloud.ErrorType_Json, err)
 			return
@@ -151,6 +152,28 @@ func sendIntentResponse(resp *chipper.IntentResult, receiver Receiver) {
 	}
 
 	receiver.OnIntent(&cloud.IntentResult{Intent: resp.Action, Parameters: buf.String(), Metadata: metadata})
+}
+
+// knowledgeBypassIntent is the cortex's knowledge answer; with external_voice the cortex speaks it (MicTap audio).
+const knowledgeBypassIntent = "intent_knowledge_response_extend_bypass"
+
+// typedParameters gives the knowledge answer's external_voice and expected_duration_ms their JSON types: chipper
+// parameters are strings, and the engine reads these two as a bool and a number. Other intents keep strings.
+func typedParameters(action string, params map[string]string) map[string]any {
+	out := make(map[string]any, len(params))
+	for k, v := range params {
+		out[k] = v
+	}
+	if action != knowledgeBypassIntent {
+		return out
+	}
+	if b, err := strconv.ParseBool(params["external_voice"]); err == nil {
+		out["external_voice"] = b
+	}
+	if n, err := strconv.ParseUint(params["expected_duration_ms"], 10, 32); err == nil {
+		out["expected_duration_ms"] = n
+	}
+	return out
 }
 
 func sendKGResponse(resp *chipper.KnowledgeGraphResponse, receiver Receiver, bypass bool) {
@@ -173,7 +196,7 @@ func sendKGResponse(resp *chipper.KnowledgeGraphResponse, receiver Receiver, byp
 	// Bypass if its an intent graph response
 	intentName := "intent_knowledge_response_extend"
 	if bypass {
-		intentName = "intent_knowledge_response_extend_bypass"
+		intentName = knowledgeBypassIntent
 	}
 
 	receiver.OnIntent(&cloud.IntentResult{

@@ -44,6 +44,8 @@ namespace Vector {
     MicDirectionConfidence  latestConfidence  = 0;
     EngineTimeStamp_t       timestampAtMax  = 0;
     uint32_t                count           = 0;
+    // how many of the count samples had voice activity (SignalEssence VAD, MicDirection::activeState == 1)
+    uint32_t                vadCount        = 0;
 
     bool IsValid() const { return count > 0; }
   };

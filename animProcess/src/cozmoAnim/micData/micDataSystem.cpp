@@ -26,7 +26,6 @@
 #include "cozmoAnim/micData/micDataInfo.h"
 #include "cozmoAnim/micData/micDataProcessor.h"
 #include "cozmoAnim/micData/micDataSystem.h"
-#include "cozmoAnim/micData/micTap.h"
 #include "cozmoAnim/showAudioStreamStateManager.h"
 
 #include "audioEngine/plugins/ankiPluginInterface.h"
@@ -44,6 +43,7 @@
 
 #include "clad/robotInterface/messageRobotToEngine_sendAnimToEngine_helper.h"
 
+#include <chrono>
 #include <iomanip>
 #include <sstream>
 
@@ -58,6 +58,11 @@ CONSOLE_VAR(bool, kSuppressTriggerResponse, RECOGNIZER_CONSOLE_GROUP, false);
 #endif // ANKI_DEV_CHEATS
 
 const std::string kMicSettingsFile = "micMuted";
+// voice triggers stay suppressed this long (plus the speaker latency) after external audio stops playing
+constexpr int64_t kExternalAudioTriggerTail_ms = 1000;
+// A stream whose completion never arrives (a very short stream, a lost message) stops suppressing voice triggers
+// after this long, the longest external voice the knowledge graph waits for
+constexpr int64_t kExternalAudioMaxSuppress_ms = 60000;
 const std::string kSpeechRecognizerWebvizName = "speechrecognizersys";
 }
 
@@ -155,15 +160,6 @@ void MicDataSystem::Init(const Anim::RobotDataLoader& dataLoader)
   };
   _speechRecognizerSystem->InitVector(callback);
 
-  // The tap must exist before the processing threads start (they call it for every block)
-  AudioEngine::PlugIns::AkAlsaSinkPlugIn* sinkPlugIn = nullptr;
-  if (const auto* audioController = _context->GetAudioController()) {
-    if (const auto* pluginInterface = audioController->GetPluginInterface()) {
-      sinkPlugIn = pluginInterface->GetAlsaSinkPlugIn();
-    }
-  }
-  _micTap.reset(new MicTap(sinkPlugIn, _persistentFolder));
-
   _micDataProcessor->Init();
   
   if( Util::FileUtils::FileExists(_persistentFolder + kMicSettingsFile) ) {
@@ -185,8 +181,6 @@ MicDataSystem::~MicDataSystem()
 {
   // Tear down the mic data processor explicitly first, because it uses functionality owned by MicDataSystem
   _micDataProcessor.reset();
-  // After the processor: its threads feed the tap until they are joined
-  _micTap.reset();
 
   _udpServer->StopListening();
 }
@@ -835,6 +829,55 @@ bool MicDataSystem::IsSpeakerPlayingAudio() const
         return pluginInterface->AkAlsaSinkIsUsingSpeaker();
       }
     }
+  }
+  return false;
+}
+
+namespace {
+  int64_t SteadyNow_ms()
+  {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+  }
+}
+
+void MicDataSystem::SetExternalAudioPlaying(bool playing)
+{
+  const bool wasPlaying = _externalAudioPlaying.exchange(playing);
+  if (!wasPlaying && playing) {
+    _externalAudioStart_ms = SteadyNow_ms();
+  }
+  if (wasPlaying && !playing) {
+    _externalAudioEnd_ms = SteadyNow_ms();
+  }
+  if (wasPlaying != playing) {
+    // the Microphones log channel is off on the robot: the DAS event reaches its syslog
+    DASMSG( external_audio_playing, "mic_data_system.external_audio_playing",
+            "External (SDK) audio started or stopped playing; voice triggers are suppressed while it plays" );
+    DASMSG_SET( s1, playing ? "started" : "stopped", "started or stopped" );
+    DASMSG_SET( i1, static_cast<int>(_speakerLatency_ms) + static_cast<int>(kExternalAudioTriggerTail_ms),
+                "Milliseconds voice triggers stay suppressed after it stops" );
+    DASMSG_SEND();
+  }
+}
+
+bool MicDataSystem::IsVoiceTriggerSuppressedByExternalAudio(uint32_t& out_msSinceEnd) const
+{
+  out_msSinceEnd = 0;
+  if (_externalAudioPlaying) {
+    return (SteadyNow_ms() - _externalAudioStart_ms) < kExternalAudioMaxSuppress_ms;
+  }
+  const int64_t end_ms = _externalAudioEnd_ms;
+  if (end_ms == 0) {
+    return false;
+  }
+  const int64_t since_ms = SteadyNow_ms() - end_ms;
+  // the speaker may still be playing for its latency after the stream completes, and the recognizer reports a
+  // phrase only after its end has been processed
+  const int64_t tail_ms = static_cast<int64_t>(_speakerLatency_ms) + kExternalAudioTriggerTail_ms;
+  if ((since_ms >= 0) && (since_ms < tail_ms)) {
+    out_msSinceEnd = static_cast<uint32_t>(since_ms);
+    return true;
   }
   return false;
 }

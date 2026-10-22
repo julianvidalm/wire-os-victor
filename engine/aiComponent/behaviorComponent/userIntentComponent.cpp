@@ -66,6 +66,9 @@ static const float kDefaultIntentFeedbackShutoffTime     =  5.0f;
 static const float kIntentFeedbackTransitionShutoffTime  =  2.0f;
 
   CONSOLE_VAR(bool, kStreamAfterDevWakeWord, "UserIntentComponent", false);
+  // v3ctor: no backpack lights and no "understood" chime for a voice request (see ShowsVoiceRequestLights)
+  CONSOLE_VAR(bool, kVoiceRequestLights, "VoiceRequest", false);
+  CONSOLE_VAR(bool, kVoiceRequestSuccessEarcon, "VoiceRequest", false);
   CONSOLE_VAR(bool, kPlayGetInAfterDevWakeWord, "UserIntentComponent", false);
 
 }
@@ -313,8 +316,10 @@ void UserIntentComponent::ActiveIntentFeedback::StartTransitionIntoActive()
   //    };
 
   if (!IsActive()) {
-    BackpackLightComponent& bplComponent = robot->GetBackpackLightComponent();
-    bplComponent.SetBackpackAnimation( BackpackAnimationTrigger::WorkingOnIt );
+    if (ShowsVoiceRequestLights()) {
+      BackpackLightComponent& bplComponent = robot->GetBackpackLightComponent();
+      bplComponent.SetBackpackAnimation( BackpackAnimationTrigger::WorkingOnIt );
+    }
 
     const float currentTime = BaseStationTimer::getInstance()->GetCurrentTimeInSeconds();
     transitionShutOffTime = (currentTime + kIntentFeedbackTransitionShutoffTime);
@@ -327,8 +332,10 @@ void UserIntentComponent::ActiveIntentFeedback::StopTransitionIntoActive()
 {
   if (isTransitionActive) {
     // clear out our transition lights (or any lights since we're going to stomp them anyway
-    BackpackLightComponent& bplComponent = robot->GetBackpackLightComponent();
-    bplComponent.ClearAllBackpackLightConfigs();
+    if (ShowsVoiceRequestLights()) {
+      BackpackLightComponent& bplComponent = robot->GetBackpackLightComponent();
+      bplComponent.ClearAllBackpackLightConfigs();
+    }
 
     isTransitionActive = false;
   }
@@ -346,8 +353,10 @@ void UserIntentComponent::ActiveIntentFeedback::Activate(UserIntentTag userInten
   {
     StopTransitionIntoActive();
 
-    BackpackLightComponent& bplComponent = robot->GetBackpackLightComponent();
-    bplComponent.SetBackpackAnimation( BackpackAnimationTrigger::WorkingOnIt );
+    if (ShowsVoiceRequestLights()) {
+      BackpackLightComponent& bplComponent = robot->GetBackpackLightComponent();
+      bplComponent.SetBackpackAnimation( BackpackAnimationTrigger::WorkingOnIt );
+    }
 
     // send audio state begin event
 //    const AudioMetaData::GameEvent::GenericEvent startEvent = AudioMetaData::GameEvent::GenericEvent::Play_Robot_Vic_SfxWorking_Loop_Play;
@@ -376,8 +385,10 @@ void UserIntentComponent::ActiveIntentFeedback::Deactivate(UserIntentTag userInt
   // UserIntentTag::INVALID intent will force deactivation
   if (IsActive() && ((userIntent == activatedIntentTag) || (userIntent == UserIntentTag::INVALID)))
   {
-    BackpackLightComponent& bplComponent = robot->GetBackpackLightComponent();
-    bplComponent.ClearAllBackpackLightConfigs();
+    if (ShowsVoiceRequestLights()) {
+      BackpackLightComponent& bplComponent = robot->GetBackpackLightComponent();
+      bplComponent.ClearAllBackpackLightConfigs();
+    }
 
     // send audio state end event
 //    const AudioMetaData::GameEvent::GenericEvent startEvent = AudioMetaData::GameEvent::GenericEvent::StopRobot_Vic_Sfx_Working_Loop_Stop;
@@ -519,6 +530,12 @@ void UserIntentComponent::SetUserIntentPending(UserIntent&& userIntent, const Us
 
   _pendingIntentTick = BaseStationTimer::getInstance()->GetTickCount();
   _pendingIntentTimeoutEnabled = true;
+
+  // every intent that becomes pending, with where it came from, so a late or second intent shows in the syslog
+  DASMSG(intent_pending, "behavior.voice_command.pending", "A user intent became pending");
+  DASMSG_SET(s1, UserIntentTagToString( _pendingIntent->intent.GetTag() ), "the pending intent type");
+  DASMSG_SET(s2, UserIntentSourceToString( _pendingIntent->source ), "Source of the intent (e.g. App, Voice)");
+  DASMSG_SEND();
 
   // just in case we were told to transition, let's stop it as a new one is about to begin
   _activeIntentFeedback.StopTransitionIntoActive();
@@ -927,6 +944,9 @@ void UserIntentComponent::UpdateDependent(const BCCompMap& dependentComps)
                    "Source of the intent that was dropped (e.g. App, Voice)");
         DASMSG_SEND_WARNING();
 
+        _lastUnclaimedIntentName = UserIntentTagToString( _pendingIntent->intent.GetTag() );
+        _lastUnclaimedIntentSource = UserIntentSourceToString( _pendingIntent->source );
+        _lastUnclaimedIntentTime_s = BaseStationTimer::getInstance()->GetCurrentTimeInSeconds();
         DropAnyUserIntent();
         _wasIntentUnclaimed = true;
       }
@@ -1106,6 +1126,16 @@ void UserIntentComponent::PushResponseToTriggerWordInternal(const std::string& i
   _robot->SendMessage(RobotInterface::EngineToRobot( std::move(intentionalCopy)) );
   _responseToTriggerWordMap.emplace_back(TriggerWordResponseEntry(id, std::move(response)));
 
+}
+
+bool UserIntentComponent::ShowsVoiceRequestLights()
+{
+  return kVoiceRequestLights;
+}
+
+bool UserIntentComponent::PlaysVoiceRequestSuccessEarcon()
+{
+  return kVoiceRequestSuccessEarcon;
 }
 
 bool UserIntentComponent::HasAnimResponseToTriggerWord() const

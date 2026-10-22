@@ -41,6 +41,10 @@ namespace Anki
       virtual void GetBehaviorOperationModifiers(BehaviorOperationModifiers &modifiers) const override;
       virtual void GetBehaviorJsonKeys(std::set<const char *> &expectedKeys) const override;
 
+      // Exposed for tests: this activation shows the talking face for the cortex's own voice, and has ended it
+      bool IsExternalVoice() const { return _dVars.externalVoice; }
+      bool IsExternalVoiceDone() const { return _dVars.externalVoiceDone; }
+
     protected:
       // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // Overrides from ICozmoBehavior
@@ -53,6 +57,7 @@ namespace Anki
       virtual void BehaviorUpdate() override;
 
       virtual void HandleWhileActivated(const EngineToGameEvent &event) override;
+      virtual void HandleWhileActivated(const RobotToEngineEvent &event) override;
 
       // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       // State Transitions
@@ -85,6 +90,15 @@ namespace Anki
 
       // streaming cues are backpack lights and audio cues to let the user know when to speak
       void PlayEarconEnd();
+
+      // external voice: the PC cortex streams the spoken answer through the SDK external audio stream, so
+      // we only show the talking face (TTS get-in, loop, get-out) until the stream ends or times out
+      bool IsExternalVoiceAnswer() const;
+      void TransitionToExternalVoice();
+      void TransitionToExternalVoiceLoop();
+      void UpdateExternalVoice();
+      void FinishExternalVoice();
+      double GetExternalVoiceDeadline() const;
 
     private:
       // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -121,6 +135,12 @@ namespace Anki
 
         AudioMetaData::GameEvent::GenericEvent earConEnd;
 
+        // external voice timeouts: margin after the expected end or the last chunk; first chunk wait when the
+        // length is unknown; hard cap
+        double externalVoiceMargin_s;
+        double externalVoiceFirstAudio_s;
+        double externalVoiceMax_s;
+
       } _iVars;
 
       // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -136,6 +156,13 @@ namespace Anki
         EGenerationStatus ttsGenerationStatus; // track the status of the response tts
         BackpackLightDataLocator lightsHandle; // lights, camera, action!
         bool wasPickedUp;
+
+        bool externalVoice;          // this answer is spoken by the cortex's audio stream
+        bool externalVoiceDone;      // the talking face is getting out
+        bool externalAudioOwned;     // the stream may still play and is ours to cancel on interruption
+        double externalVoiceStart_s;
+        double lastChunk_s;          // last chunk the robot reported adding to the stream, 0 if none
+        uint32_t expectedDuration_ms;
 
       } _dVars;
 

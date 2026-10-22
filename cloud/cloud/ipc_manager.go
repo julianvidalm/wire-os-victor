@@ -1,13 +1,14 @@
 // ipc_manager.go handles messages between gateway and the following other processes:
 //   - vic-engine: There are both a CLAD (EngineCladIpcManager) and a Protobuf (EngineProtoIpcManager)
-//                 domain socket connecting gateway to the engine. The CLAD socket is currently in the
-//                 process of being deprecated because it was designed as a temporary connection while
-//                 messages were converted to Protobuf.
+//     domain socket connecting gateway to the engine. The CLAD socket is currently in the
+//     process of being deprecated because it was designed as a temporary connection while
+//     messages were converted to Protobuf.
 //   - vic-switchboard: There is a CLAD domain socket connecting gateway to switchboard. This socket is
-//                      used to coordinate authentication between the two processes.
+//     used to coordinate authentication between the two processes.
 //   - vic-cloud: There is a CLAD domain socket connecting gateway to vic-cloud. This socket is used to
-//                refresh the latest authentication tokens from vic-cloud. This socket is defined inside
-//                the tokens.go file because the properties of that socket are a special case.
+//     refresh the latest authentication tokens from vic-cloud. This socket is defined inside
+//     the tokens.go file because the properties of that socket are a special case.
+//
 // To add a new connection, add the domain socket name (as defined by the server) to the list of consts
 // below. And create a new IpcManager struct for that given socket. In main.go the connection should be
 // Init-ed. Then it will be ready to use.
@@ -51,8 +52,9 @@ const (
 // field conn: The connection to the domain socket by which messages are passed between processes.
 //
 // Note: If there is a function that can be shared, use the engine manager.
-//       The only reason I duplicated the functions so far was interfaces
-//       were strangely causing the deleteListenerUnsafe to fail. - shawn 7/17/18
+//
+//	The only reason I duplicated the functions so far was interfaces
+//	were strangely causing the deleteListenerUnsafe to fail. - shawn 7/17/18
 type IpcManager struct {
 	connMutex sync.Mutex
 	conn      ipc.Conn

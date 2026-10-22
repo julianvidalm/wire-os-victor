@@ -35,6 +35,7 @@
 #include "engine/components/mics/micComponent.h"
 #include "engine/components/mics/micDirectionHistory.h"
 #include "engine/components/movementComponent.h"
+#include "engine/components/settingsManager.h"
 #include "engine/cozmoContext.h"
 #include "engine/externalInterface/externalMessageRouter.h"
 #include "engine/externalInterface/gatewayInterface.h"
@@ -44,10 +45,14 @@
 #include "micDataTypes.h"
 #include "osState/osState.h"
 #include "util/console/consoleInterface.h"
+#include "util/logging/DAS.h"
 
 #include "clad/types/behaviorComponent/behaviorClasses.h"
 
 #include "coretech/common/engine/utils/timer.h"
+
+#include <array>
+#include <vector>
 
 
 #define DEBUG_TRIGGER_WORD_VERBOSE 0 // add some verbose debugging if trying to track down issues
@@ -89,6 +94,91 @@ namespace {
   // If supplied, any received intent not whitelisted will be consumed and the "unknown intent" outcome execized
   const char* kIntentWhitelistKey                  = "whiteListedIntents";
 
+  // If supplied, the listening feedback after the wake (see the "listeningFeedback" keys below). Without it the
+  // behavior is the stock one
+  const char* kListeningFeedbackKey                = "listeningFeedback";
+  const char* kFeedbackEyeHueKey                   = "eyeHue";
+  const char* kFeedbackEyeSaturationKey            = "eyeSaturation";
+  const char* kFeedbackTurnAtWakeKey               = "turnAtWake";
+  const char* kFeedbackWakeDirectionWindowKey      = "wakeDirectionWindow_s";
+  const char* kFeedbackMinDirectionConfidenceKey   = "minDirectionConfidence";
+  const char* kFeedbackHeadAngleKey                = "headAngle_deg";
+  const char* kFeedbackHoldAnimKey                 = "holdAnimName";
+  const char* kFeedbackPromptAnimKey               = "promptAnimName";
+  const char* kFeedbackPromptAfterKey              = "promptAfter_s";
+  const char* kFeedbackGiveUpAnimKey               = "giveUpAnimName";
+  const char* kFeedbackGiveUpAfterKey              = "giveUpAfter_s";
+  const char* kFeedbackGiveUpWaitKey               = "giveUpWait_s";
+  const char* kFeedbackMinSpeechKey                = "minSpeech_s";
+  const char* kFeedbackSpeechWindowKey             = "speechWindow_s";
+  const char* kFeedbackSettleAfterLookKey          = "settleAfterLook_s";
+  const char* kFeedbackThinkingGetInAnimKey        = "thinkingGetInAnimName";
+  const char* kFeedbackThinkingLoopAnimKey         = "thinkingLoopAnimName";
+  const char* kFeedbackThinkingDelayKey            = "thinkingDelay_s";
+
+  // UNCANNY_YELLOW in eye_color_config.json, the PC cortex listening color
+  constexpr float kDefaultFeedbackEyeHue           = 0.11f;
+  constexpr float kDefaultFeedbackEyeSaturation    = 1.0f;
+  // the wake phrase ("hey vector", ~0.7-0.9s) plus the detection and mic history latency
+  constexpr float kDefaultWakeDirectionWindow_s    = 1.5f;
+  // same threshold as the stream vote below (kDirStreamingConfToIgnore)
+  constexpr int   kDefaultFeedbackMinDirectionConf = 500;
+  // VC_ListeningGetIn ends with the head at 33 degrees; the stock turns end lower (12-19)
+  constexpr float kDefaultFeedbackHeadAngle_deg    = 33.0f;
+  // from the end of the look gesture (pc-cortex S6: '?' after ~4s, then ~3s more, then give up)
+  constexpr float kDefaultFeedbackPromptAfter_s    = 4.0f;
+  constexpr float kDefaultFeedbackGiveUpAfter_s    = 7.0f;
+  // after the give-up gesture, how long the behavior waits for the stream's late result (normally the cloud's
+  // noaudio, which ends it at once) before handing the robot back
+  constexpr float kDefaultFeedbackGiveUpWait_s     = 4.0f;
+  // speech: at least this much voice activity (robot VAD, 10ms samples) within the speech window
+  // (a sustained run: the VAD's own hangover and short noises stay under it)
+  constexpr float kDefaultFeedbackMinSpeech_s      = 0.6f;
+  constexpr float kDefaultFeedbackSpeechWindow_s   = 1.0f;
+  // voice activity right after the look gesture is ignored for this long: the VAD still reports the gesture's
+  // motor noise, the earcon tail and its own hangover (live: ~100% voice for 0.3s+ after every look, even silent)
+  constexpr float kDefaultFeedbackSettleAfterLook_s = 1.0f;
+  // while listening, one "vad_sample" event this often, so the levels of silent and spoken wakes can be compared
+  constexpr double kFeedbackVadSamplePeriod_s      = 1.0;
+  // the stream ended without robot-heard speech: wait this long for the result before the thinking face, so a
+  // quick noaudio goes straight to the give-up gesture
+  constexpr float kDefaultFeedbackThinkingDelay_s  = 0.3f;
+
+  // a listening feedback step, as a log line and a DAS event (defined with the listening feedback below)
+  void LogListeningFeedback(const char* step, int value, double sinceActivation_s, int total = 0);
+
+  struct VoiceSamples {
+    uint32_t voice = 0; // samples (10ms) with voice activity
+    uint32_t total = 0; // all samples
+  };
+
+  // Mic samples (10ms each) heard in [begin_ms, end_ms], and how many of them had voice activity
+  VoiceSamples CountVoiceSamples(const MicDirectionHistory& history, EngineTimeStamp_t begin_ms, EngineTimeStamp_t end_ms)
+  {
+    VoiceSamples result;
+    if( end_ms <= begin_ms ) {
+      return result;
+    }
+    const TimeStamp_t window_ms = TimeStamp_t(end_ms - begin_ms);
+    const MicDirectionNodeList list = history.GetHistoryAtTime(end_ms, window_ms);
+    double voice = 0.0;
+    double total = 0.0;
+    for( const auto& node : list ) {
+      double share = 1.0;
+      // only the part of a node that falls inside the window
+      if( (node.timestampEnd > node.timestampBegin) && (node.timestampBegin < begin_ms) ) {
+        const double nodeDuration = TimeStamp_t(node.timestampEnd - node.timestampBegin);
+        const double timeInNode = (node.timestampEnd > begin_ms) ? TimeStamp_t(node.timestampEnd - begin_ms) : 0;
+        share = timeInNode / nodeDuration;
+      }
+      voice += node.vadCount * share;
+      total += node.count * share;
+    }
+    result.voice = static_cast<uint32_t>(voice);
+    result.total = static_cast<uint32_t>(total);
+    return result;
+  }
+
   CONSOLE_VAR( bool, kRespondsToTriggerWord, CONSOLE_GROUP, true );
 
   // the behavior will always "listen" for at least this long once it hears the wakeword, even if we receive
@@ -96,7 +186,10 @@ namespace {
   // stream doesn't open within this amount of time, so don't lower this number too much
   CONSOLE_VAR_RANGED( float, kMinListeningTimeout_s, CONSOLE_GROUP, 5.0f, 0.0f, 30.0f );
   // this is the maximum duration we'll wait from streaming begin
-  CONSOLE_VAR_RANGED( float, kMaxStreamingDuration_s, CONSOLE_GROUP, 10.0f, 0.0f, 20.0f );
+  // MicData::kStreamingTimeout_ms (the robot's mic stream cap, 14s) plus the PC cortex's answer time (whisper and
+  // the LLM, ~4-5s). vic-cloud gives up at 20s from the wake (voice.DefaultTimeout), which is before this, since
+  // the stream opens after the wake
+  CONSOLE_VAR_RANGED( float, kMaxStreamingDuration_s, CONSOLE_GROUP, 20.0f, 0.0f, 30.0f );
 
 
   // when our streaming begins/ends there is a high chance that we will record some non-intent sound, these
@@ -261,6 +354,47 @@ BehaviorReactToVoiceCommand::BehaviorReactToVoiceCommand( const Json::Value& con
     const Json::Value& whiteListedIntents = ConditionUserIntentPending::GenerateConfig(config[kIntentWhitelistKey]);
     _iVars.intentWhitelistCondition = std::make_unique<ConditionUserIntentPending>(whiteListedIntents);
   }
+
+  const Json::Value& feedbackConfig = config[kListeningFeedbackKey];
+  if( feedbackConfig.isObject() )
+  {
+    auto& fb = _iVars.feedback;
+    fb.enabled = true;
+    fb.eyeHue = kDefaultFeedbackEyeHue;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackEyeHueKey, fb.eyeHue );
+    fb.eyeSaturation = kDefaultFeedbackEyeSaturation;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackEyeSaturationKey, fb.eyeSaturation );
+    // the turn is behaviorOnIntent's (the stock trigger word turn), done at the wake instead of after the intent
+    fb.turnAtWake = true;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackTurnAtWakeKey, fb.turnAtWake );
+    fb.wakeDirectionWindow_s = kDefaultWakeDirectionWindow_s;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackWakeDirectionWindowKey, fb.wakeDirectionWindow_s );
+    int minDirectionConfidence = kDefaultFeedbackMinDirectionConf;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackMinDirectionConfidenceKey, minDirectionConfidence );
+    fb.minDirectionConfidence = static_cast<MicDirectionConfidence>(minDirectionConfidence);
+    fb.headAngle_deg = kDefaultFeedbackHeadAngle_deg;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackHeadAngleKey, fb.headAngle_deg );
+    // empty animation names skip that clip
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackHoldAnimKey, fb.holdAnimName );
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackPromptAnimKey, fb.promptAnimName );
+    fb.promptAfter_s = kDefaultFeedbackPromptAfter_s;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackPromptAfterKey, fb.promptAfter_s );
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackGiveUpAnimKey, fb.giveUpAnimName );
+    fb.giveUpAfter_s = kDefaultFeedbackGiveUpAfter_s;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackGiveUpAfterKey, fb.giveUpAfter_s );
+    fb.giveUpWait_s = kDefaultFeedbackGiveUpWait_s;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackGiveUpWaitKey, fb.giveUpWait_s );
+    fb.minSpeech_s = kDefaultFeedbackMinSpeech_s;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackMinSpeechKey, fb.minSpeech_s );
+    fb.speechWindow_s = kDefaultFeedbackSpeechWindow_s;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackSpeechWindowKey, fb.speechWindow_s );
+    fb.settleAfterLook_s = kDefaultFeedbackSettleAfterLook_s;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackSettleAfterLookKey, fb.settleAfterLook_s );
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackThinkingGetInAnimKey, fb.thinkingGetInAnimName );
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackThinkingLoopAnimKey, fb.thinkingLoopAnimName );
+    fb.thinkingDelay_s = kDefaultFeedbackThinkingDelay_s;
+    JsonTools::GetValueOptional( feedbackConfig, kFeedbackThinkingDelayKey, fb.thinkingDelay_s );
+  }
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -286,7 +420,8 @@ void BehaviorReactToVoiceCommand::GetBehaviorJsonKeys(std::set<const char*>& exp
     kPushResponseKey,
     kNotifyOnWifiErrorsKey,
     kNotifyOnCloudErrorsKey,
-    kIntentWhitelistKey
+    kIntentWhitelistKey,
+    kListeningFeedbackKey
   };
   expectedKeys.insert( std::begin(list), std::end(list) );
 }
@@ -435,6 +570,18 @@ void BehaviorReactToVoiceCommand::OnBehaviorActivated()
     _iVars.intentWhitelistCondition->SetActive(GetBEI(), setActive);
   }
 
+  if( IsListeningFeedbackEnabled() )
+  {
+    // listening eye color from the wake until listening ends (RestoreListeningEyeColor on every exit)
+    GetBEI().GetSettingsManager().ShowTemporaryEyeColor( _iVars.feedback.eyeHue, _iVars.feedback.eyeSaturation );
+    _showingListeningEyeColor = true;
+    // the applied color, to check live that the listening color was sent at the wake (hue and saturation x1000)
+    LogListeningFeedback( "eye_color_applied", static_cast<int>( _iVars.feedback.eyeHue * 1000.0f ), 0.0,
+                          static_cast<int>( _iVars.feedback.eyeSaturation * 1000.0f ) );
+    // pick the direction before anything moves: the mic history is relative to the robot's current heading
+    PickWakeDirection();
+  }
+
   StartListening();
 }
 
@@ -447,6 +594,9 @@ void BehaviorReactToVoiceCommand::OnBehaviorDeactivated()
     BackpackLightComponent& blc = GetBEI().GetBackpackLightComponent();
     blc.StopLoopingBackpackAnimation( _dVars.lightsHandle );
   }
+
+  // any exit (interrupted, timed out, gave up, handed over to the intent's behavior)
+  RestoreListeningEyeColor();
 
   auto* gi = GetBEI().GetRobotInfo().GetGatewayInterface();
   if( gi != nullptr ) {
@@ -546,7 +696,10 @@ void BehaviorReactToVoiceCommand::BehaviorUpdate()
 
       // we now loop indefinitely and wait for the timeout in the update function
       // this is because we don't know when the streaming will begin (if it hasn't already) so we can't time it accurately
-      if ( _dVars.persistent.forcedAnimListeningLoop != AnimationTrigger::Count ) {
+      if ( IsListeningFeedbackEnabled() ) {
+        // instead of the listening loop: turn toward the wake phrase, then hold the listening pose
+        StartFeedbackLook();
+      } else if ( _dVars.persistent.forcedAnimListeningLoop != AnimationTrigger::Count ) {
         DelegateIfInControl( new ReselectingLoopAnimationAction( _dVars.persistent.forcedAnimListeningLoop ) );
       } else {
         DelegateIfInControl( new ReselectingLoopAnimationAction( _iVars.animListeningLoop ) );
@@ -557,7 +710,11 @@ void BehaviorReactToVoiceCommand::BehaviorUpdate()
   else if ( _dVars.state == EState::ListeningLoop )
   {
     const bool isIntentPending = GetBehaviorComp<UserIntentComponent>().IsAnyUserIntentPending();
-    if ( isIntentPending )
+    if ( IsListeningFeedbackEnabled() && UpdateFeedbackGiveUp() )
+    {
+      // the robot already gave up; the stream's late result was handled there
+    }
+    else if ( isIntentPending )
     {
       // kill delegates, we'll handle next steps with callbacks
       // note: passing true to CancelDelegates doesn't call the callback if we also delegate
@@ -582,10 +739,16 @@ void BehaviorReactToVoiceCommand::BehaviorUpdate()
         CancelDelegates( false );
         StopListening();
       }
+      else if ( IsListeningFeedbackEnabled() )
+      {
+        UpdateListeningFeedback();
+      }
     }
   }
 
-  if ( ( _dVars.state != EState::ListeningGetIn ) && !IsControlDelegated() )
+  // with the listening feedback the listening pose is held without a delegate
+  const bool holdingWithoutDelegate = IsListeningFeedbackEnabled() && ( _dVars.state == EState::ListeningLoop );
+  if ( IsActivated() && ( _dVars.state != EState::ListeningGetIn ) && !holdingWithoutDelegate && !IsControlDelegated() )
   {
     CancelSelf();
   }
@@ -762,6 +925,9 @@ void BehaviorReactToVoiceCommand::StopListening()
   // force our model of the streaming to close, in the case that we timed out (etc) before the actual stream closed
   OnStreamingEnd();
 
+  // listening is over: the user's eye color again before the answer, the give-up gesture or the error reaction
+  RestoreListeningEyeColor();
+
   UpdateUserIntentStatus();
   OnVictorListeningEnd();
   TransitionToThinking();
@@ -801,11 +967,12 @@ void BehaviorReactToVoiceCommand::OnVictorListeningEnd()
     blc.StopLoopingBackpackAnimation( _dVars.lightsHandle );
   }
 
-  // play our "earcon end" audio, which depends on if our intent was successfully heard or not
+  // play our "earcon end" audio, which depends on if our intent was successfully heard or not. The "understood"
+  // chime is off by default (UserIntentComponent::PlaysVoiceRequestSuccessEarcon); "didn't understand" plays
   BehaviorExternalInterface& bei = GetBEI();
   if ( EIntentStatus::IntentHeard == _dVars.intentStatus )
   {
-    if ( GenericEvent::Invalid != _iVars.earConSuccess )
+    if ( ( GenericEvent::Invalid != _iVars.earConSuccess ) && UserIntentComponent::PlaysVoiceRequestSuccessEarcon() )
     {
       // Play earcon end audio
       bei.GetRobotAudioClient().PostEvent( _iVars.earConSuccess, AudioMetaData::GameObjectType::Behavior );
@@ -903,7 +1070,13 @@ void BehaviorReactToVoiceCommand::TransitionToThinking()
     // Play a reaction behavior if we were told to ...
     // ** only in the case that we've heard a valid intent **
     const bool heardValidIntent = ( _dVars.intentStatus == EIntentStatus::IntentHeard );
-    if ( heardValidIntent && _iVars.reactionBehavior )
+    const bool turnedAtWake = IsListeningFeedbackEnabled() && _iVars.feedback.turnAtWake;
+    if ( heardValidIntent && _iVars.reactionBehavior && turnedAtWake )
+    {
+      LOG_INFO( "BehaviorReactToVoiceCommand.Thinking.TurnedAtWake",
+                "Already turned toward the voice at the wake, no second turn after the intent" );
+    }
+    else if ( heardValidIntent && _iVars.reactionBehavior )
     {
       if( IsTurnEnabled() ) {
         const MicDirectionIndex triggerDirection = GetReactionDirection();
@@ -940,6 +1113,13 @@ void BehaviorReactToVoiceCommand::TransitionToThinking()
       TransitionToIntentReceived();
     }
   };
+
+  if ( IsListeningFeedbackEnabled() ) {
+    // no listening loop to get out of: the listening pose, the '?' prompt or the thinking face were cancelled
+    // with the delegates; the answer (or the give-up for silence) follows at once
+    callback();
+    return;
+  }
 
   // we need to get out of our listening loop anim before we react
   if ( _dVars.persistent.forcedAnimListeningGetOut != AnimationTrigger::Count ) {
@@ -1191,6 +1371,359 @@ double BehaviorReactToVoiceCommand::GetListeningTimeout() const
   }
 
   return timeout;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// Listening feedback
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+namespace {
+  // The Microphones log channel is off on the robot: every feedback step also goes out as a DAS event, which
+  // reaches its syslog ("@behavior.voice_command.listening_feedback"), like the cortex listening reaction's
+  void LogListeningFeedback(const char* step, int value, double sinceActivation_s, int total)
+  {
+    LOG_INFO( "BehaviorReactToVoiceCommand.ListeningFeedback", "%s (%d/%d) at %.2fs",
+              step, value, total, sinceActivation_s );
+    DASMSG( behavior_voice_command_listening_feedback, "behavior.voice_command.listening_feedback",
+            "A listening feedback step after the robot's own wake word" );
+    DASMSG_SET( s1, step, "eye_color_applied, wake_turn, wake_turn_skipped, look_end, speech_heard, vad_sample, prompt, give_up, "
+                          "give_up_result, thinking or eye_color_restored" );
+    DASMSG_SET( i1, value, "The wake direction (0 in front, clockwise, 12 unknown) for the turn steps; voice "
+                           "samples (10ms) in the window for speech_heard and vad_sample; hue x1000 for eye_color_applied; else 0" );
+    DASMSG_SET( i2, static_cast<int>(sinceActivation_s * 1000.0), "Milliseconds since the wake reaction started" );
+    DASMSG_SET( i3, total, "All samples (10ms) in the window for speech_heard and vad_sample; saturation x1000 for "
+                       "eye_color_applied; else 0" );
+    DASMSG_SEND();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+BehaviorReactToVoiceCommand::VoiceDirectionVote
+BehaviorReactToVoiceCommand::VoteVoiceDirection(const MicDirectionHistory& history,
+                                                EngineTimeStamp_t end_ms,
+                                                TimeStamp_t window_ms,
+                                                MicDirectionConfidence minConfidence,
+                                                bool voiceOnly)
+{
+  VoiceDirectionVote vote;
+  if( window_ms == 0 ) {
+    return vote;
+  }
+
+  const EngineTimeStamp_t begin_ms = ( (TimeStamp_t)end_ms > window_ms ) ? EngineTimeStamp_t((TimeStamp_t)end_ms - window_ms)
+                                                                              : EngineTimeStamp_t(0);
+  MicDirectionNodeList list = history.GetHistoryAtTime(end_ms, window_ms);
+
+  // only count the part of the first and last nodes that falls inside the window
+  std::vector<double> share(list.size(), 1.0);
+  if( list.size() > 1 ) {
+    const MicDirectionNode& front = list.front();
+    if( (front.timestampBegin < begin_ms) && (front.timestampEnd > front.timestampBegin) ) {
+      const double nodeDuration = TimeStamp_t(front.timestampEnd - front.timestampBegin);
+      const double timeInNode = (front.timestampEnd > begin_ms) ? TimeStamp_t(front.timestampEnd - begin_ms) : 0;
+      share.front() = timeInNode / nodeDuration;
+    }
+
+    const MicDirectionNode& back = list.back();
+    if( (back.timestampEnd > end_ms) && (back.timestampEnd > back.timestampBegin) ) {
+      const double nodeDuration = TimeStamp_t(back.timestampEnd - back.timestampBegin);
+      const double timeInNode = (end_ms > back.timestampBegin) ? TimeStamp_t(end_ms - back.timestampBegin) : 0;
+      share.back() = timeInNode / nodeDuration;
+    }
+  }
+
+  std::array<uint32_t, kNumMicDirections + 1> counts{};
+  std::array<double, kNumMicDirections + 1> confidenceSums{};
+  size_t i = 0;
+  for( const auto& node : list ) {
+    const double nodeShare = share[i++];
+    if( (node.directionIndex <= kMicDirectionUnknown) && (node.confidenceAvg > minConfidence) ) {
+      // a direction run can mix voice and other sound; its voice samples are spread evenly over it
+      const uint32_t counted = static_cast<uint32_t>( (voiceOnly ? node.vadCount : node.count) * nodeShare );
+      counts[node.directionIndex] += counted;
+      confidenceSums[node.directionIndex] += static_cast<double>(node.confidenceAvg) * counted;
+    }
+  }
+
+  uint32_t bestCount = 0;
+  for( MicDirectionIndex dir = kFirstMicDirectionIndex; dir < kNumMicDirections; ++dir ) {
+    if( counts[dir] > bestCount ) {
+      vote.direction = dir;
+      bestCount = counts[dir];
+    }
+  }
+  if( vote.direction != kMicDirectionUnknown ) {
+    vote.samples = bestCount;
+    vote.confidence = static_cast<MicDirectionConfidence>( confidenceSums[vote.direction] / bestCount );
+  }
+  return vote;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::PickWakeDirection()
+{
+  const auto& fb = _iVars.feedback;
+  const MicDirectionHistory& micHistory = GetBEI().GetMicComponent().GetMicDirectionHistory();
+  const EngineTimeStamp_t now_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
+  const TimeStamp_t window_ms = static_cast<TimeStamp_t>( std::max(0.0f, fb.wakeDirectionWindow_s) * 1000.0f );
+
+  // the dominant direction over the wake phrase, counting only samples with voice activity.
+  // Fallbacks: the trigger word's own direction, then the latest direction
+  const auto vote = VoteVoiceDirection( micHistory, now_ms, window_ms, fb.minDirectionConfidence, true );
+  const char* source = "wake_vote";
+  MicDirectionIndex direction = vote.direction;
+  if( kMicDirectionUnknown == direction ) {
+    direction = _triggerDirection;
+    source = "trigger";
+  }
+  if( kMicDirectionUnknown == direction ) {
+    direction = GetDirectionFromMicHistory();
+    source = "recent";
+  }
+  _dVars.feedback.wakeDirection = direction;
+
+  LOG_INFO( "BehaviorReactToVoiceCommand.ListeningFeedback.WakeDirection",
+            "direction %d from %s (vote %d confidence %d samples %u, trigger %d)",
+            (int)direction, source, (int)vote.direction, (int)vote.confidence, vote.samples, (int)_triggerDirection );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::StartFeedbackLook()
+{
+  // the stock turn after "hey vector" (behaviorOnIntent, ReactToTriggerDirectionAwake), now before the user
+  // speaks. It decides by itself not to turn on the charger, when picked up, or for voices from 11, 12 and 1 o'clock
+  auto& turn = _iVars.reactionBehavior;
+  const MicDirectionIndex direction = _dVars.feedback.wakeDirection;
+  if( _iVars.feedback.turnAtWake && ( turn != nullptr ) && ( direction != kMicDirectionUnknown ) )
+  {
+    _dVars.feedback.phase = DynamicVariables::EFeedbackPhase::Turning;
+    turn->SetReactDirection( direction );
+    if( turn->WantsToBeActivated() &&
+        DelegateIfInControl( turn.get(), &BehaviorReactToVoiceCommand::TransitionToFeedbackHold ) )
+    {
+      LogListeningFeedback( "wake_turn", (int)direction, GetActivatedDuration() );
+      return;
+    }
+    turn->ClearReactDirection();
+  }
+
+  LogListeningFeedback( "wake_turn_skipped", (int)direction, GetActivatedDuration() );
+  TransitionToFeedbackHold();
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::TransitionToFeedbackHold()
+{
+  // end looking up at the user (the stock turns end with the head at 12-19 degrees), then hold the silent eyes
+  _dVars.feedback.phase = DynamicVariables::EFeedbackPhase::Holding;
+  IActionRunner* action = nullptr;
+  if( _iVars.feedback.holdAnimName.empty() ) {
+    action = new MoveHeadToAngleAction( DEG_TO_RAD(_iVars.feedback.headAngle_deg) );
+  } else {
+    action = new CompoundActionParallel({
+      new MoveHeadToAngleAction( DEG_TO_RAD(_iVars.feedback.headAngle_deg) ),
+      new PlayAnimationAction( _iVars.feedback.holdAnimName ),
+    });
+  }
+  if( !DelegateIfInControl( action, &BehaviorReactToVoiceCommand::OnFeedbackLookEnd ) ) {
+    OnFeedbackLookEnd();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::OnFeedbackLookEnd()
+{
+  // the look gesture is over (the user talks once the robot looks at them): the prompt and give-up timers start,
+  // and only voice heard from now on counts as speech (the earcon, the get-in and the turn are behind)
+  _dVars.feedback.phase = DynamicVariables::EFeedbackPhase::Listening;
+  _dVars.feedback.lookEnd_s = BaseStationTimer::getInstance()->GetCurrentTimeInSecondsDouble();
+  _dVars.feedback.lookEnd_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
+  _dVars.feedback.lastVadSample_s = _dVars.feedback.lookEnd_s;
+  LogListeningFeedback( "look_end", 0, GetActivatedDuration() );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::UpdateListeningFeedback()
+{
+  using EFeedbackPhase = DynamicVariables::EFeedbackPhase;
+  auto& dfb = _dVars.feedback;
+  const auto& fb = _iVars.feedback;
+  if( dfb.phase != EFeedbackPhase::Listening ) {
+    // turning or holding (the timers have not started), or thinking (waiting for the intent)
+    return;
+  }
+
+  const double now_s = BaseStationTimer::getInstance()->GetCurrentTimeInSecondsDouble();
+
+  // the stream closed (the cloud heard the end of speech) and no intent yet: the answer is on its way
+  if( _dVars.streamingEndTime > 0.0 ) {
+    if( dfb.streamEndSeen_s <= 0.0 ) {
+      dfb.streamEndSeen_s = now_s;
+    }
+    if( dfb.speechHeard || ( now_s - dfb.streamEndSeen_s >= fb.thinkingDelay_s ) ) {
+      TransitionToFeedbackThinking();
+    }
+    return;
+  }
+
+  const EngineTimeStamp_t now_ms = BaseStationTimer::getInstance()->GetCurrentTimeStamp();
+  const MicDirectionHistory& micHistory = GetBEI().GetMicComponent().GetMicDirectionHistory();
+  const TimeStamp_t window_ms = static_cast<TimeStamp_t>( std::max(0.0f, fb.speechWindow_s) * 1000.0f );
+  const EngineTimeStamp_t windowBegin_ms = ( (TimeStamp_t)now_ms > window_ms )
+                                           ? EngineTimeStamp_t((TimeStamp_t)now_ms - window_ms) : EngineTimeStamp_t(0);
+
+  // the raw levels once a second while listening (the settle time included), to tune the rule live
+  if( now_s - dfb.lastVadSample_s >= kFeedbackVadSamplePeriod_s ) {
+    dfb.lastVadSample_s = now_s;
+    const EngineTimeStamp_t sampleBegin_ms = std::max( windowBegin_ms, dfb.lookEnd_ms );
+    const VoiceSamples levels = CountVoiceSamples( micHistory, sampleBegin_ms, now_ms );
+    LogListeningFeedback( "vad_sample", (int)levels.voice, GetActivatedDuration(), (int)levels.total );
+  }
+
+  if( !dfb.speechHeard ) {
+    // only voice after the settle time counts, and it must be a sustained run: at least minSpeech_s of voice
+    // within the speech window (a window still shorter than minSpeech_s cannot reach it)
+    const EngineTimeStamp_t settled_ms = EngineTimeStamp_t( (TimeStamp_t)dfb.lookEnd_ms +
+      static_cast<TimeStamp_t>( std::max(0.0f, fb.settleAfterLook_s) * 1000.0f ) );
+    if( now_ms > settled_ms ) {
+      const EngineTimeStamp_t begin_ms = std::max( windowBegin_ms, settled_ms );
+      const VoiceSamples samples = CountVoiceSamples( micHistory, begin_ms, now_ms );
+      const uint32_t minVoice = static_cast<uint32_t>( std::max(0.0f, fb.minSpeech_s) * 1000.0f /
+                                                       MicDirectionHistory::kTimePerDirectionUpdate_ms );
+      if( ( samples.voice > 0 ) && ( samples.voice >= minVoice ) ) {
+        // speech cancels the prompt and the give-up; the cloud ends listening from here (stream close, intent)
+        dfb.speechHeard = true;
+        LogListeningFeedback( "speech_heard", (int)samples.voice, GetActivatedDuration(), (int)samples.total );
+        return;
+      }
+    }
+  }
+
+  if( dfb.speechHeard ) {
+    return;
+  }
+
+  const double sinceLookEnd_s = now_s - dfb.lookEnd_s;
+  if( sinceLookEnd_s >= fb.giveUpAfter_s ) {
+    TransitionToFeedbackGiveUp();
+  } else if( !dfb.promptShown && ( sinceLookEnd_s >= fb.promptAfter_s ) ) {
+    ShowFeedbackPrompt();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::ShowFeedbackPrompt()
+{
+  // no speech yet: ask with the question mark clip and keep listening. The clip ends where the listening pose
+  // started, so the eyes simply hold after it; the intent, the give-up or the thinking face cancel it
+  _dVars.feedback.promptShown = true;
+  LogListeningFeedback( "prompt", 0, GetActivatedDuration() );
+  if( _iVars.feedback.promptAnimName.empty() ) {
+    return;
+  }
+  CancelDelegates( false );
+  DelegateIfInControl( new PlayAnimationAction( _iVars.feedback.promptAnimName ) );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::TransitionToFeedbackGiveUp()
+{
+  // still no speech: the robot stops listening. The user's eye color again, then the stock "never mind" gesture.
+  // The stream may still be open: its late result (normally the cloud's noaudio) is consumed silently after this
+  using EFeedbackPhase = DynamicVariables::EFeedbackPhase;
+  _dVars.feedback.phase = EFeedbackPhase::GivingUp;
+  CancelDelegates( false );
+  RestoreListeningEyeColor();
+  LogListeningFeedback( "give_up", 0, GetActivatedDuration() );
+  if( GetBEI().HasMoodManager() ) {
+    GetBEI().GetMoodManager().TriggerEmotionEvent( "NoValidVoiceIntent" );
+  }
+
+  auto onGestureEnd = [this]() {
+    _dVars.feedback.phase = DynamicVariables::EFeedbackPhase::GaveUp;
+    _dVars.feedback.giveUpEnd_s = BaseStationTimer::getInstance()->GetCurrentTimeInSecondsDouble();
+  };
+  if( _iVars.feedback.giveUpAnimName.empty() ||
+      !DelegateIfInControl( new PlayAnimationAction( _iVars.feedback.giveUpAnimName ), onGestureEnd ) ) {
+    onGestureEnd();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+bool BehaviorReactToVoiceCommand::UpdateFeedbackGiveUp()
+{
+  using EFeedbackPhase = DynamicVariables::EFeedbackPhase;
+  auto& dfb = _dVars.feedback;
+  const bool givingUp = ( dfb.phase == EFeedbackPhase::GivingUp );
+  if( !givingUp && ( dfb.phase != EFeedbackPhase::GaveUp ) ) {
+    return false;
+  }
+
+  UserIntentComponent& uic = GetBehaviorComp<UserIntentComponent>();
+  static const UserIntentTag silence = USER_INTENT(silence);
+  if( uic.IsUserIntentPending( silence ) ) {
+    // the cloud agrees there was no speech: already shown, consume it so it never reads as unclaimed
+    uic.DropUserIntent( silence );
+    dfb.resultAfterGiveUp = true;
+    LogListeningFeedback( "give_up_result", 0, GetActivatedDuration() );
+  } else if( uic.IsAnyUserIntentPending() ) {
+    // the cloud heard something the robot's VAD missed: handle it like any intent (cuts the gesture)
+    LogListeningFeedback( "give_up_result", 1, GetActivatedDuration() );
+    CancelDelegates( false );
+    StopListening();
+    return true;
+  } else if( uic.WasUserIntentError() ) {
+    uic.ResetUserIntentError();
+    dfb.resultAfterGiveUp = true;
+    LogListeningFeedback( "give_up_result", 2, GetActivatedDuration() );
+  }
+
+  if( !givingUp ) {
+    const double now_s = BaseStationTimer::getInstance()->GetCurrentTimeInSecondsDouble();
+    if( dfb.resultAfterGiveUp || ( now_s - dfb.giveUpEnd_s >= _iVars.feedback.giveUpWait_s ) ) {
+      CancelSelf();
+    }
+  }
+  return true;
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::TransitionToFeedbackThinking()
+{
+  // the user stopped talking and the cloud is preparing the answer: the user's eye color again and the stock
+  // "looking it up" face until the intent arrives (or the stock listening timeout)
+  _dVars.feedback.phase = DynamicVariables::EFeedbackPhase::Thinking;
+  CancelDelegates( false );
+  RestoreListeningEyeColor();
+  LogListeningFeedback( "thinking", _dVars.feedback.speechHeard ? 1 : 0, GetActivatedDuration() );
+
+  if( _iVars.feedback.thinkingGetInAnimName.empty() ||
+      !DelegateIfInControl( new PlayAnimationAction( _iVars.feedback.thinkingGetInAnimName ),
+                            &BehaviorReactToVoiceCommand::TransitionToFeedbackThinkingLoop ) ) {
+    TransitionToFeedbackThinkingLoop();
+  }
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::TransitionToFeedbackThinkingLoop()
+{
+  if( _iVars.feedback.thinkingLoopAnimName.empty() ) {
+    return;
+  }
+  // loops until the intent (or a timeout) cancels it
+  DelegateIfInControl( new PlayAnimationAction( _iVars.feedback.thinkingLoopAnimName, 0, true,
+                                                (u8)AnimTrackFlag::NO_TRACKS,
+                                                PlayAnimationAction::GetInfiniteTimeoutInSeconds() ) );
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+void BehaviorReactToVoiceCommand::RestoreListeningEyeColor()
+{
+  if( _showingListeningEyeColor ) {
+    GetBEI().GetSettingsManager().RestoreEyeColorSetting();
+    _showingListeningEyeColor = false;
+    LogListeningFeedback( "eye_color_restored", 0, IsActivated() ? GetActivatedDuration() : 0.0 );
+  }
 }
 
 } // namespace Vector

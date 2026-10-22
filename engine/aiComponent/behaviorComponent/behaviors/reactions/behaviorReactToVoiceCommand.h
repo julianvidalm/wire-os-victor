@@ -25,6 +25,7 @@ namespace Vector {
 
 class BehaviorReactToMicDirection;
 class ConditionUserIntentPending;
+class MicDirectionHistory;
 enum class AnimationTrigger : int32_t;
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -60,6 +61,24 @@ public:
                          const AnimationTrigger& listeningGetOut);
   
   void ResetListeningAnimsToConfig();
+
+  struct VoiceDirectionVote {
+    MicDirectionIndex direction = kMicDirectionUnknown;
+    // average SignalEssence confidence of the winning direction's counted samples
+    MicDirectionConfidence confidence = 0;
+    // samples counted for the winning direction (10 ms each)
+    uint32_t samples = 0;
+  };
+
+  // Most common direction heard in the window [end_ms - window_ms, end_ms], counting only samples whose
+  // average confidence is above minConfidence and, with voiceOnly, only samples with voice activity (VAD).
+  // Without voiceOnly it is the same vote as ComputeReactionDirectionFromStream. The listening feedback votes
+  // with voiceOnly over the wake phrase to turn toward the speaker.
+  static VoiceDirectionVote VoteVoiceDirection(const MicDirectionHistory& history,
+                                               EngineTimeStamp_t end_ms,
+                                               TimeStamp_t window_ms,
+                                               MicDirectionConfidence minConfidence,
+                                               bool voiceOnly);
 
 protected:
 
@@ -117,6 +136,26 @@ protected:
   void OnVictorListeningEnd();
 
   void HandleStreamFailure();
+
+  // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  // Listening feedback (the "listeningFeedback" config; off without it, which is the stock behavior)
+
+  bool IsListeningFeedbackEnabled() const { return _iVars.feedback.enabled; }
+  // the direction of the wake phrase, picked at activation before anything moves
+  void PickWakeDirection();
+  // after the get-in: turn toward the wake phrase, then hold the listening pose
+  void StartFeedbackLook();
+  void TransitionToFeedbackHold();
+  void OnFeedbackLookEnd();
+  // no intent pending: speech detection, the '?' prompt, the give-up and the thinking face
+  void UpdateListeningFeedback();
+  // while giving up or after it: the late result of the stream. True when it handled this tick
+  bool UpdateFeedbackGiveUp();
+  void ShowFeedbackPrompt();
+  void TransitionToFeedbackGiveUp();
+  void TransitionToFeedbackThinking();
+  void TransitionToFeedbackThinkingLoop();
+  void RestoreListeningEyeColor();
 
   // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
   // Direction Helpers
@@ -185,6 +224,31 @@ private:
 
     std::unique_ptr<ConditionUserIntentPending> intentWhitelistCondition;
 
+    // the listening feedback after the wake (listening eye color, turn toward the voice at the wake, the '?'
+    // prompt and the give-up when the robot hears no speech, the thinking face until the answer)
+    struct ListeningFeedback
+    {
+      bool enabled = false;
+      float eyeHue = 0.0f;
+      float eyeSaturation = 0.0f;
+      bool turnAtWake = false;
+      float wakeDirectionWindow_s = 0.0f;
+      MicDirectionConfidence minDirectionConfidence = 0;
+      float headAngle_deg = 0.0f;
+      std::string holdAnimName;
+      std::string promptAnimName;
+      float promptAfter_s = 0.0f;
+      std::string giveUpAnimName;
+      float giveUpAfter_s = 0.0f;
+      float giveUpWait_s = 0.0f;
+      float minSpeech_s = 0.0f;
+      float speechWindow_s = 0.0f;
+      float settleAfterLook_s = 0.0f;
+      std::string thinkingGetInAnimName;
+      std::string thinkingLoopAnimName;
+      float thinkingDelay_s = 0.0f;
+    } feedback;
+
   } _iVars;
 
 
@@ -205,6 +269,31 @@ private:
     EngineTimeStamp_t         timestampToDisableTurnFor;
 
     bool                      expectingStream;
+
+    enum class EFeedbackPhase : uint8_t
+    {
+      Off,       // no listening feedback (not configured, or before the get-in ends)
+      Turning,   // turning toward the wake phrase
+      Holding,   // head up to the listening pose
+      Listening, // the look gesture ended: waiting for speech, the '?' prompt and give-up timers run
+      GivingUp,  // the give-up gesture is playing
+      GaveUp,    // after the give-up gesture: waiting briefly for the stream's late result
+      Thinking,  // the stream ended: thinking face until the intent arrives
+    };
+
+    struct Feedback
+    {
+      EFeedbackPhase    phase = EFeedbackPhase::Off;
+      MicDirectionIndex wakeDirection = kMicDirectionUnknown;
+      double            lookEnd_s = 0.0;
+      EngineTimeStamp_t lookEnd_ms = 0;
+      bool              speechHeard = false;
+      bool              promptShown = false;
+      bool              resultAfterGiveUp = false;
+      double            giveUpEnd_s = 0.0;
+      double            streamEndSeen_s = 0.0;
+      double            lastVadSample_s = 0.0;
+    } feedback;
     
     struct Persistent {
 
@@ -220,6 +309,9 @@ private:
 
   // these are dynamic vars that live beyond the activation scope ...
   MicDirectionIndex         _triggerDirection;
+
+  // the listening eye color is showing (restored on every exit)
+  bool                      _showingListeningEyeColor = false;
 
   bool IsTurnEnabled() const;
 

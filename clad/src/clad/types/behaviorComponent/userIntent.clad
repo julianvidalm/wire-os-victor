@@ -64,7 +64,12 @@ structure UserIntent_PlaybackMessage
 structure UserIntent_KnowledgeResponse
 {
   string answer,
-  string query_text
+  string query_text,
+  // the PC cortex speaks the answer itself through the external audio stream; the robot only shows its
+  // talking face (BehaviorKnowledgeGraphQuestion external voice mode)
+  bool external_voice = 0,
+  // expected length of that audio in ms, 0 if unknown
+  uint_32 expected_duration_ms = 0
 }
 
 structure UserIntent_GlobalStop

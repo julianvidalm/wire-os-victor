@@ -28,8 +28,20 @@ jobs:
           df -h /
 
       - uses: actions/checkout@v5
-        with:
-          submodules: recursive
+
+      # EXTERNALS is our private mirror of os-vector/wire-os-externals (it holds the v3ctor animation groups); its
+      # read-only deploy key is the EXTERNALS_DEPLOY_KEY secret.
+      - name: Check out EXTERNALS
+        env:
+          EXTERNALS_DEPLOY_KEY: ${{ secrets.EXTERNALS_DEPLOY_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$EXTERNALS_DEPLOY_KEY" > ~/.ssh/externals_key
+          chmod 600 ~/.ssh/externals_key
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+          git -c core.sshCommand="ssh -i ~/.ssh/externals_key -o IdentitiesOnly=yes" \
+            submodule update --init --recursive
+          rm -f ~/.ssh/externals_key
 
       # vicos-sdk, go, protoc and upx, downloaded by project/build-scripts/download-*.sh at pinned versions.
       - name: Cache build tools
@@ -55,3 +67,4 @@ jobs:
             test -s "_build/vicos/Release/$f" || { echo "missing $f"; exit 1; }
           done
           du -sh _build/vicos/Release
+

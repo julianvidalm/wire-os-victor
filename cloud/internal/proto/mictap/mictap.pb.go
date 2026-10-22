@@ -31,16 +31,729 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type Chunk struct {
+type AudioStatus_State int32
+
+const (
+	AudioStatus_STATE_UNSPECIFIED AudioStatus_State = 0
+	// The prepare reached the engine (vic-anim starts playing after 0.2 s of audio).
+	AudioStatus_STARTED AudioStatus_State = 1
+	// Playback finished (engine).
+	AudioStatus_COMPLETED AudioStatus_State = 2
+	// Cancelled by the cortex or replaced by a new stream (robot).
+	AudioStatus_CANCELLED AudioStatus_State = 3
+	// The engine could not prepare, post or add the audio, or a step was invalid.
+	AudioStatus_FAILED AudioStatus_State = 4
+	// Audio arrived faster than it plays: the robot's queue or vic-anim's buffer overflowed; the stream is
+	// cancelled.
+	AudioStatus_OVERFLOW AudioStatus_State = 5
+)
+
+// Enum value maps for AudioStatus_State.
+var (
+	AudioStatus_State_name = map[int32]string{
+		0: "STATE_UNSPECIFIED",
+		1: "STARTED",
+		2: "COMPLETED",
+		3: "CANCELLED",
+		4: "FAILED",
+		5: "OVERFLOW",
+	}
+	AudioStatus_State_value = map[string]int32{
+		"STATE_UNSPECIFIED": 0,
+		"STARTED":           1,
+		"COMPLETED":         2,
+		"CANCELLED":         3,
+		"FAILED":            4,
+		"OVERFLOW":          5,
+	}
+)
+
+func (x AudioStatus_State) Enum() *AudioStatus_State {
+	p := new(AudioStatus_State)
+	*p = x
+	return p
+}
+
+func (x AudioStatus_State) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AudioStatus_State) Descriptor() protoreflect.EnumDescriptor {
+	return file_mictap_proto_enumTypes[0].Descriptor()
+}
+
+func (AudioStatus_State) Type() protoreflect.EnumType {
+	return &file_mictap_proto_enumTypes[0]
+}
+
+func (x AudioStatus_State) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AudioStatus_State.Descriptor instead.
+func (AudioStatus_State) EnumDescriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{9, 0}
+}
+
+// Command is something the robot should do now.
+type Command struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Command:
+	//
+	//	*Command_IntentResult
+	//	*Command_Knowledge
+	//	*Command_Wake
+	//	*Command_Audio
+	Command       isCommand_Command `protobuf_oneof:"command"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Command) Reset() {
+	*x = Command{}
+	mi := &file_mictap_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Command) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Command) ProtoMessage() {}
+
+func (x *Command) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Command.ProtoReflect.Descriptor instead.
+func (*Command) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *Command) GetCommand() isCommand_Command {
+	if x != nil {
+		return x.Command
+	}
+	return nil
+}
+
+func (x *Command) GetIntentResult() *IntentResult {
+	if x != nil {
+		if x, ok := x.Command.(*Command_IntentResult); ok {
+			return x.IntentResult
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetKnowledge() *KnowledgeResponse {
+	if x != nil {
+		if x, ok := x.Command.(*Command_Knowledge); ok {
+			return x.Knowledge
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetWake() *Wake {
+	if x != nil {
+		if x, ok := x.Command.(*Command_Wake); ok {
+			return x.Wake
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetAudio() *Audio {
+	if x != nil {
+		if x, ok := x.Command.(*Command_Audio); ok {
+			return x.Audio
+		}
+	}
+	return nil
+}
+
+type isCommand_Command interface {
+	isCommand_Command()
+}
+
+type Command_IntentResult struct {
+	// A chipper-style intent result, delivered to the engine as if it answered the robot's own voice request
+	// (for example intent_clock_time).
+	IntentResult *IntentResult `protobuf:"bytes,1,opt,name=intent_result,json=intentResult,proto3,oneof"`
+}
+
+type Command_Knowledge struct {
+	// Text for Vector to say, with its knowledge-graph animations.
+	Knowledge *KnowledgeResponse `protobuf:"bytes,2,opt,name=knowledge,proto3,oneof"`
+}
+
+type Command_Wake struct {
+	// Wake up as if the user had said "Hey Vector" (or pressed the backpack button): get-in animation,
+	// earcon, then the robot's normal voice request, which the cortex answers with what it already heard.
+	Wake *Wake `protobuf:"bytes,3,opt,name=wake,proto3,oneof"`
+}
+
+type Command_Audio struct {
+	// A step of an audio stream for Vector's speaker (the cortex's own voice), played through the engine's
+	// external audio stream (the SDK's ExternalAudioStream*). One stream plays at a time.
+	Audio *Audio `protobuf:"bytes,4,opt,name=audio,proto3,oneof"`
+}
+
+func (*Command_IntentResult) isCommand_Command() {}
+
+func (*Command_Knowledge) isCommand_Command() {}
+
+func (*Command_Wake) isCommand_Command() {}
+
+func (*Command_Audio) isCommand_Command() {}
+
+type Wake struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Wake) Reset() {
+	*x = Wake{}
+	mi := &file_mictap_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Wake) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Wake) ProtoMessage() {}
+
+func (x *Wake) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Wake.ProtoReflect.Descriptor instead.
+func (*Wake) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{1}
+}
+
+type IntentResult struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Intent         string                 `protobuf:"bytes,1,opt,name=intent,proto3" json:"intent,omitempty"`
+	ParametersJson string                 `protobuf:"bytes,2,opt,name=parameters_json,json=parametersJson,proto3" json:"parameters_json,omitempty"`
+	Metadata       string                 `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *IntentResult) Reset() {
+	*x = IntentResult{}
+	mi := &file_mictap_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IntentResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IntentResult) ProtoMessage() {}
+
+func (x *IntentResult) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IntentResult.ProtoReflect.Descriptor instead.
+func (*IntentResult) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *IntentResult) GetIntent() string {
+	if x != nil {
+		return x.Intent
+	}
+	return ""
+}
+
+func (x *IntentResult) GetParametersJson() string {
+	if x != nil {
+		return x.ParametersJson
+	}
+	return ""
+}
+
+func (x *IntentResult) GetMetadata() string {
+	if x != nil {
+		return x.Metadata
+	}
+	return ""
+}
+
+type KnowledgeResponse struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Answer    string                 `protobuf:"bytes,1,opt,name=answer,proto3" json:"answer,omitempty"`
+	QueryText string                 `protobuf:"bytes,2,opt,name=query_text,json=queryText,proto3" json:"query_text,omitempty"`
+	// The cortex speaks the answer itself as an Audio stream: the robot shows its talking face until that stream
+	// ends but does not speak answer with its own voice. Without it, the robot speaks answer (the fallback).
+	ExternalVoice bool `protobuf:"varint,3,opt,name=external_voice,json=externalVoice,proto3" json:"external_voice,omitempty"`
+	// Expected length of that audio in ms, 0 if unknown; the robot gives up waiting for the stream after it
+	// (plus a margin, extended while chunks keep arriving).
+	ExpectedDurationMs uint32 `protobuf:"varint,4,opt,name=expected_duration_ms,json=expectedDurationMs,proto3" json:"expected_duration_ms,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *KnowledgeResponse) Reset() {
+	*x = KnowledgeResponse{}
+	mi := &file_mictap_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KnowledgeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KnowledgeResponse) ProtoMessage() {}
+
+func (x *KnowledgeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KnowledgeResponse.ProtoReflect.Descriptor instead.
+func (*KnowledgeResponse) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *KnowledgeResponse) GetAnswer() string {
+	if x != nil {
+		return x.Answer
+	}
+	return ""
+}
+
+func (x *KnowledgeResponse) GetQueryText() string {
+	if x != nil {
+		return x.QueryText
+	}
+	return ""
+}
+
+func (x *KnowledgeResponse) GetExternalVoice() bool {
+	if x != nil {
+		return x.ExternalVoice
+	}
+	return false
+}
+
+func (x *KnowledgeResponse) GetExpectedDurationMs() uint32 {
+	if x != nil {
+		return x.ExpectedDurationMs
+	}
+	return 0
+}
+
+// Audio is one step of an audio stream. Steps of a stream other than the current one are ignored; a prepare
+// with a new stream_id cancels the current stream first.
+type Audio struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	StreamId uint32                 `protobuf:"varint,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	// Types that are valid to be assigned to Step:
+	//
+	//	*Audio_Prepare
+	//	*Audio_Chunk
+	//	*Audio_Complete
+	//	*Audio_Cancel
+	Step          isAudio_Step `protobuf_oneof:"step"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Audio) Reset() {
+	*x = Audio{}
+	mi := &file_mictap_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Audio) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Audio) ProtoMessage() {}
+
+func (x *Audio) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Audio.ProtoReflect.Descriptor instead.
+func (*Audio) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Audio) GetStreamId() uint32 {
+	if x != nil {
+		return x.StreamId
+	}
+	return 0
+}
+
+func (x *Audio) GetStep() isAudio_Step {
+	if x != nil {
+		return x.Step
+	}
+	return nil
+}
+
+func (x *Audio) GetPrepare() *AudioPrepare {
+	if x != nil {
+		if x, ok := x.Step.(*Audio_Prepare); ok {
+			return x.Prepare
+		}
+	}
+	return nil
+}
+
+func (x *Audio) GetChunk() *AudioChunk {
+	if x != nil {
+		if x, ok := x.Step.(*Audio_Chunk); ok {
+			return x.Chunk
+		}
+	}
+	return nil
+}
+
+func (x *Audio) GetComplete() *AudioComplete {
+	if x != nil {
+		if x, ok := x.Step.(*Audio_Complete); ok {
+			return x.Complete
+		}
+	}
+	return nil
+}
+
+func (x *Audio) GetCancel() *AudioCancel {
+	if x != nil {
+		if x, ok := x.Step.(*Audio_Cancel); ok {
+			return x.Cancel
+		}
+	}
+	return nil
+}
+
+type isAudio_Step interface {
+	isAudio_Step()
+}
+
+type Audio_Prepare struct {
+	Prepare *AudioPrepare `protobuf:"bytes,2,opt,name=prepare,proto3,oneof"`
+}
+
+type Audio_Chunk struct {
+	Chunk *AudioChunk `protobuf:"bytes,3,opt,name=chunk,proto3,oneof"`
+}
+
+type Audio_Complete struct {
+	Complete *AudioComplete `protobuf:"bytes,4,opt,name=complete,proto3,oneof"`
+}
+
+type Audio_Cancel struct {
+	Cancel *AudioCancel `protobuf:"bytes,5,opt,name=cancel,proto3,oneof"`
+}
+
+func (*Audio_Prepare) isAudio_Step() {}
+
+func (*Audio_Chunk) isAudio_Step() {}
+
+func (*Audio_Complete) isAudio_Step() {}
+
+func (*Audio_Cancel) isAudio_Step() {}
+
+type AudioPrepare struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 8000-16025 Hz (vic-anim's limits); the cortex sends 16000.
+	SampleRate uint32 `protobuf:"varint,1,opt,name=sample_rate,json=sampleRate,proto3" json:"sample_rate,omitempty"`
+	// 1-100 (SDK playback volume, under the robot's master volume); 0 means 100.
+	Volume uint32 `protobuf:"varint,2,opt,name=volume,proto3" json:"volume,omitempty"`
+	// Informational (logged): the engine's timeout comes from KnowledgeResponse.expected_duration_ms.
+	ExpectedDurationMs uint32 `protobuf:"varint,3,opt,name=expected_duration_ms,json=expectedDurationMs,proto3" json:"expected_duration_ms,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *AudioPrepare) Reset() {
+	*x = AudioPrepare{}
+	mi := &file_mictap_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AudioPrepare) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AudioPrepare) ProtoMessage() {}
+
+func (x *AudioPrepare) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AudioPrepare.ProtoReflect.Descriptor instead.
+func (*AudioPrepare) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *AudioPrepare) GetSampleRate() uint32 {
+	if x != nil {
+		return x.SampleRate
+	}
+	return 0
+}
+
+func (x *AudioPrepare) GetVolume() uint32 {
+	if x != nil {
+		return x.Volume
+	}
+	return 0
+}
+
+func (x *AudioPrepare) GetExpectedDurationMs() uint32 {
+	if x != nil {
+		return x.ExpectedDurationMs
+	}
+	return 0
+}
+
+type AudioChunk struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Signed 16-bit little-endian mono PCM, at most 1024 bytes (the engine's limit), an even number of bytes.
+	Samples       []byte `protobuf:"bytes,1,opt,name=samples,proto3" json:"samples,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AudioChunk) Reset() {
+	*x = AudioChunk{}
+	mi := &file_mictap_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AudioChunk) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AudioChunk) ProtoMessage() {}
+
+func (x *AudioChunk) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AudioChunk.ProtoReflect.Descriptor instead.
+func (*AudioChunk) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *AudioChunk) GetSamples() []byte {
+	if x != nil {
+		return x.Samples
+	}
+	return nil
+}
+
+type AudioComplete struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AudioComplete) Reset() {
+	*x = AudioComplete{}
+	mi := &file_mictap_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AudioComplete) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AudioComplete) ProtoMessage() {}
+
+func (x *AudioComplete) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AudioComplete.ProtoReflect.Descriptor instead.
+func (*AudioComplete) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{7}
+}
+
+type AudioCancel struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AudioCancel) Reset() {
+	*x = AudioCancel{}
+	mi := &file_mictap_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AudioCancel) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AudioCancel) ProtoMessage() {}
+
+func (x *AudioCancel) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AudioCancel.ProtoReflect.Descriptor instead.
+func (*AudioCancel) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{8}
+}
+
+// AudioStatus reports what happened to an audio stream, sent upstream in a Chunk with no data.
+type AudioStatus struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StreamId      uint32                 `protobuf:"varint,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	State         AudioStatus_State      `protobuf:"varint,2,opt,name=state,proto3,enum=v3ctor.mictap.v1.AudioStatus_State" json:"state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AudioStatus) Reset() {
+	*x = AudioStatus{}
+	mi := &file_mictap_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AudioStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AudioStatus) ProtoMessage() {}
+
+func (x *AudioStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_mictap_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AudioStatus.ProtoReflect.Descriptor instead.
+func (*AudioStatus) Descriptor() ([]byte, []int) {
+	return file_mictap_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *AudioStatus) GetStreamId() uint32 {
+	if x != nil {
+		return x.StreamId
+	}
+	return 0
+}
+
+func (x *AudioStatus) GetState() AudioStatus_State {
+	if x != nil {
+		return x.State
+	}
+	return AudioStatus_STATE_UNSPECIFIED
+}
+
+type Chunk struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Data  []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	// Set, with empty data, when the robot reports on an Audio stream. Older cortexes skip empty chunks.
+	AudioStatus   *AudioStatus `protobuf:"bytes,2,opt,name=audio_status,json=audioStatus,proto3" json:"audio_status,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Chunk) Reset() {
 	*x = Chunk{}
-	mi := &file_mictap_proto_msgTypes[0]
+	mi := &file_mictap_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -52,7 +765,7 @@ func (x *Chunk) String() string {
 func (*Chunk) ProtoMessage() {}
 
 func (x *Chunk) ProtoReflect() protoreflect.Message {
-	mi := &file_mictap_proto_msgTypes[0]
+	mi := &file_mictap_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -65,12 +778,19 @@ func (x *Chunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Chunk.ProtoReflect.Descriptor instead.
 func (*Chunk) Descriptor() ([]byte, []int) {
-	return file_mictap_proto_rawDescGZIP(), []int{0}
+	return file_mictap_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Chunk) GetData() []byte {
 	if x != nil {
 		return x.Data
+	}
+	return nil
+}
+
+func (x *Chunk) GetAudioStatus() *AudioStatus {
+	if x != nil {
+		return x.AudioStatus
 	}
 	return nil
 }
@@ -85,7 +805,7 @@ type StreamSummary struct {
 
 func (x *StreamSummary) Reset() {
 	*x = StreamSummary{}
-	mi := &file_mictap_proto_msgTypes[1]
+	mi := &file_mictap_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -97,7 +817,7 @@ func (x *StreamSummary) String() string {
 func (*StreamSummary) ProtoMessage() {}
 
 func (x *StreamSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_mictap_proto_msgTypes[1]
+	mi := &file_mictap_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -110,7 +830,7 @@ func (x *StreamSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamSummary.ProtoReflect.Descriptor instead.
 func (*StreamSummary) Descriptor() ([]byte, []int) {
-	return file_mictap_proto_rawDescGZIP(), []int{1}
+	return file_mictap_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *StreamSummary) GetMicFrames() uint64 {
@@ -131,15 +851,62 @@ var File_mictap_proto protoreflect.FileDescriptor
 
 const file_mictap_proto_rawDesc = "" +
 	"\n" +
-	"\fmictap.proto\x12\x10v3ctor.mictap.v1\"\x1b\n" +
+	"\fmictap.proto\x12\x10v3ctor.mictap.v1\"\xff\x01\n" +
+	"\aCommand\x12E\n" +
+	"\rintent_result\x18\x01 \x01(\v2\x1e.v3ctor.mictap.v1.IntentResultH\x00R\fintentResult\x12C\n" +
+	"\tknowledge\x18\x02 \x01(\v2#.v3ctor.mictap.v1.KnowledgeResponseH\x00R\tknowledge\x12,\n" +
+	"\x04wake\x18\x03 \x01(\v2\x16.v3ctor.mictap.v1.WakeH\x00R\x04wake\x12/\n" +
+	"\x05audio\x18\x04 \x01(\v2\x17.v3ctor.mictap.v1.AudioH\x00R\x05audioB\t\n" +
+	"\acommand\"\x06\n" +
+	"\x04Wake\"k\n" +
+	"\fIntentResult\x12\x16\n" +
+	"\x06intent\x18\x01 \x01(\tR\x06intent\x12'\n" +
+	"\x0fparameters_json\x18\x02 \x01(\tR\x0eparametersJson\x12\x1a\n" +
+	"\bmetadata\x18\x03 \x01(\tR\bmetadata\"\xa3\x01\n" +
+	"\x11KnowledgeResponse\x12\x16\n" +
+	"\x06answer\x18\x01 \x01(\tR\x06answer\x12\x1d\n" +
+	"\n" +
+	"query_text\x18\x02 \x01(\tR\tqueryText\x12%\n" +
+	"\x0eexternal_voice\x18\x03 \x01(\bR\rexternalVoice\x120\n" +
+	"\x14expected_duration_ms\x18\x04 \x01(\rR\x12expectedDurationMs\"\x96\x02\n" +
+	"\x05Audio\x12\x1b\n" +
+	"\tstream_id\x18\x01 \x01(\rR\bstreamId\x12:\n" +
+	"\aprepare\x18\x02 \x01(\v2\x1e.v3ctor.mictap.v1.AudioPrepareH\x00R\aprepare\x124\n" +
+	"\x05chunk\x18\x03 \x01(\v2\x1c.v3ctor.mictap.v1.AudioChunkH\x00R\x05chunk\x12=\n" +
+	"\bcomplete\x18\x04 \x01(\v2\x1f.v3ctor.mictap.v1.AudioCompleteH\x00R\bcomplete\x127\n" +
+	"\x06cancel\x18\x05 \x01(\v2\x1d.v3ctor.mictap.v1.AudioCancelH\x00R\x06cancelB\x06\n" +
+	"\x04step\"y\n" +
+	"\fAudioPrepare\x12\x1f\n" +
+	"\vsample_rate\x18\x01 \x01(\rR\n" +
+	"sampleRate\x12\x16\n" +
+	"\x06volume\x18\x02 \x01(\rR\x06volume\x120\n" +
+	"\x14expected_duration_ms\x18\x03 \x01(\rR\x12expectedDurationMs\"&\n" +
+	"\n" +
+	"AudioChunk\x12\x18\n" +
+	"\asamples\x18\x01 \x01(\fR\asamples\"\x0f\n" +
+	"\rAudioComplete\"\r\n" +
+	"\vAudioCancel\"\xca\x01\n" +
+	"\vAudioStatus\x12\x1b\n" +
+	"\tstream_id\x18\x01 \x01(\rR\bstreamId\x129\n" +
+	"\x05state\x18\x02 \x01(\x0e2#.v3ctor.mictap.v1.AudioStatus.StateR\x05state\"c\n" +
+	"\x05State\x12\x15\n" +
+	"\x11STATE_UNSPECIFIED\x10\x00\x12\v\n" +
+	"\aSTARTED\x10\x01\x12\r\n" +
+	"\tCOMPLETED\x10\x02\x12\r\n" +
+	"\tCANCELLED\x10\x03\x12\n" +
+	"\n" +
+	"\x06FAILED\x10\x04\x12\f\n" +
+	"\bOVERFLOW\x10\x05\"]\n" +
 	"\x05Chunk\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\"U\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12@\n" +
+	"\faudio_status\x18\x02 \x01(\v2\x1d.v3ctor.mictap.v1.AudioStatusR\vaudioStatus\"U\n" +
 	"\rStreamSummary\x12\x1d\n" +
 	"\n" +
 	"mic_frames\x18\x01 \x01(\x04R\tmicFrames\x12%\n" +
-	"\x0espeaker_frames\x18\x02 \x01(\x04R\rspeakerFrames2N\n" +
+	"\x0espeaker_frames\x18\x02 \x01(\x04R\rspeakerFrames2\x91\x01\n" +
 	"\x06MicTap\x12D\n" +
-	"\x06Stream\x12\x17.v3ctor.mictap.v1.Chunk\x1a\x1f.v3ctor.mictap.v1.StreamSummary(\x01BBZ@github.com/digital-dream-labs/vector-cloud/internal/proto/mictapb\x06proto3"
+	"\x06Stream\x12\x17.v3ctor.mictap.v1.Chunk\x1a\x1f.v3ctor.mictap.v1.StreamSummary(\x01\x12A\n" +
+	"\aSession\x12\x17.v3ctor.mictap.v1.Chunk\x1a\x19.v3ctor.mictap.v1.Command(\x010\x01BBZ@github.com/digital-dream-labs/vector-cloud/internal/proto/mictapb\x06proto3"
 
 var (
 	file_mictap_proto_rawDescOnce sync.Once
@@ -153,19 +920,43 @@ func file_mictap_proto_rawDescGZIP() []byte {
 	return file_mictap_proto_rawDescData
 }
 
-var file_mictap_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_mictap_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_mictap_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_mictap_proto_goTypes = []any{
-	(*Chunk)(nil),         // 0: v3ctor.mictap.v1.Chunk
-	(*StreamSummary)(nil), // 1: v3ctor.mictap.v1.StreamSummary
+	(AudioStatus_State)(0),    // 0: v3ctor.mictap.v1.AudioStatus.State
+	(*Command)(nil),           // 1: v3ctor.mictap.v1.Command
+	(*Wake)(nil),              // 2: v3ctor.mictap.v1.Wake
+	(*IntentResult)(nil),      // 3: v3ctor.mictap.v1.IntentResult
+	(*KnowledgeResponse)(nil), // 4: v3ctor.mictap.v1.KnowledgeResponse
+	(*Audio)(nil),             // 5: v3ctor.mictap.v1.Audio
+	(*AudioPrepare)(nil),      // 6: v3ctor.mictap.v1.AudioPrepare
+	(*AudioChunk)(nil),        // 7: v3ctor.mictap.v1.AudioChunk
+	(*AudioComplete)(nil),     // 8: v3ctor.mictap.v1.AudioComplete
+	(*AudioCancel)(nil),       // 9: v3ctor.mictap.v1.AudioCancel
+	(*AudioStatus)(nil),       // 10: v3ctor.mictap.v1.AudioStatus
+	(*Chunk)(nil),             // 11: v3ctor.mictap.v1.Chunk
+	(*StreamSummary)(nil),     // 12: v3ctor.mictap.v1.StreamSummary
 }
 var file_mictap_proto_depIdxs = []int32{
-	0, // 0: v3ctor.mictap.v1.MicTap.Stream:input_type -> v3ctor.mictap.v1.Chunk
-	1, // 1: v3ctor.mictap.v1.MicTap.Stream:output_type -> v3ctor.mictap.v1.StreamSummary
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	3,  // 0: v3ctor.mictap.v1.Command.intent_result:type_name -> v3ctor.mictap.v1.IntentResult
+	4,  // 1: v3ctor.mictap.v1.Command.knowledge:type_name -> v3ctor.mictap.v1.KnowledgeResponse
+	2,  // 2: v3ctor.mictap.v1.Command.wake:type_name -> v3ctor.mictap.v1.Wake
+	5,  // 3: v3ctor.mictap.v1.Command.audio:type_name -> v3ctor.mictap.v1.Audio
+	6,  // 4: v3ctor.mictap.v1.Audio.prepare:type_name -> v3ctor.mictap.v1.AudioPrepare
+	7,  // 5: v3ctor.mictap.v1.Audio.chunk:type_name -> v3ctor.mictap.v1.AudioChunk
+	8,  // 6: v3ctor.mictap.v1.Audio.complete:type_name -> v3ctor.mictap.v1.AudioComplete
+	9,  // 7: v3ctor.mictap.v1.Audio.cancel:type_name -> v3ctor.mictap.v1.AudioCancel
+	0,  // 8: v3ctor.mictap.v1.AudioStatus.state:type_name -> v3ctor.mictap.v1.AudioStatus.State
+	10, // 9: v3ctor.mictap.v1.Chunk.audio_status:type_name -> v3ctor.mictap.v1.AudioStatus
+	11, // 10: v3ctor.mictap.v1.MicTap.Stream:input_type -> v3ctor.mictap.v1.Chunk
+	11, // 11: v3ctor.mictap.v1.MicTap.Session:input_type -> v3ctor.mictap.v1.Chunk
+	12, // 12: v3ctor.mictap.v1.MicTap.Stream:output_type -> v3ctor.mictap.v1.StreamSummary
+	1,  // 13: v3ctor.mictap.v1.MicTap.Session:output_type -> v3ctor.mictap.v1.Command
+	12, // [12:14] is the sub-list for method output_type
+	10, // [10:12] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_mictap_proto_init() }
@@ -173,18 +964,31 @@ func file_mictap_proto_init() {
 	if File_mictap_proto != nil {
 		return
 	}
+	file_mictap_proto_msgTypes[0].OneofWrappers = []any{
+		(*Command_IntentResult)(nil),
+		(*Command_Knowledge)(nil),
+		(*Command_Wake)(nil),
+		(*Command_Audio)(nil),
+	}
+	file_mictap_proto_msgTypes[4].OneofWrappers = []any{
+		(*Audio_Prepare)(nil),
+		(*Audio_Chunk)(nil),
+		(*Audio_Complete)(nil),
+		(*Audio_Cancel)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mictap_proto_rawDesc), len(file_mictap_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   2,
+			NumEnums:      1,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_mictap_proto_goTypes,
 		DependencyIndexes: file_mictap_proto_depIdxs,
+		EnumInfos:         file_mictap_proto_enumTypes,
 		MessageInfos:      file_mictap_proto_msgTypes,
 	}.Build()
 	File_mictap_proto = out.File

@@ -49,6 +49,12 @@ public:
                           MicDirectionIndex selectedDirection);
   void AddMicPowerSample(EngineTimeStamp_t timestamp, float powerLevel, float noiseFloor);
   void AddVadLogSample(EngineTimeStamp_t timeStamp, float noiseFloorLevel, int activeState);
+  // Pairs the robot time of the latest mic sample (MicDirection::timestamp, the clock of the anim process's mic
+  // blocks) with the engine time it was recorded at, so robot mic times can be placed in this history
+  void AddRobotTimeSample(TimeStamp_t robotTime_ms, EngineTimeStamp_t engineTime_ms);
+  // Engine time of a robot mic time, from the latest pair (robot times after the latest sample map to it).
+  // False before the first sample or when the result would fall before the engine clock started
+  bool GetEngineTimeAtRobotTime(TimeStamp_t robotTime_ms, EngineTimeStamp_t& engineTime_ms) const;
 
   // Interface for requesting the "best" direction
   static constexpr uint32_t kDefaultDirectionRecentTime_ms = 1000;
@@ -77,6 +83,10 @@ private:
 
   // direction that we're currently focusing our mics
   MicDirectionIndex _mostRecentSelectedDirection = kMicDirectionUnknown;
+
+  bool              _hasRobotTimeSample = false;
+  TimeStamp_t       _latestRobotTime_ms = 0;
+  EngineTimeStamp_t _latestRobotTimeAtEngine_ms = 0;
 
   struct SoundTrackingData
   {

@@ -3,5 +3,7 @@
   "behaviorID": "TriggerWordWithoutIntent",
 
   // Possibly lock treads if this is triggered in mid-air?
-  "animTriggers": ["VC_IntentNeutral"]
+  // The cloud heard no speech after the wake (intent_system_noaudio): the same give-up gesture the listening
+  // feedback plays (anim_wakeword_idk_01, one of VC_IntentNeutral's ag_vc_wakeword_idk clips)
+  "animNames": ["anim_wakeword_idk_01"]
 }

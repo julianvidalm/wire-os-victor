@@ -29,5 +29,39 @@
 
   "behaviorOnIntent"        : "ReactToTriggerDirectionAwake",
   
-  "exitAfterListeningIfNotStreaming" : true
+  "exitAfterListeningIfNotStreaming" : true,
+
+  // The listening feedback the PC cortex wake had (pc-cortex S6), on the robot's own "hey vector". After the
+  // stock get-in: the turn toward the wake phrase (behaviorOnIntent, now at the wake instead of after the intent;
+  // no second turn), then the head up and a silent eye pose held in the listening eye color. From the end of
+  // that look gesture, with no speech heard by the robot's VAD: the '?' prompt clip at promptAfter_s (still
+  // listening), the give-up gesture at giveUpAfter_s (listening ends; the stream's late noaudio is consumed
+  // silently, waiting at most giveUpWait_s for it). Speech cancels both. When the stream closes (end of
+  // speech) the thinking face holds until the intent arrives. The user's eye color comes back on every exit
+  "listeningFeedback": {
+    // listening eye color (UNCANNY_YELLOW), not saved as the eye color setting
+    "eyeHue": 0.11,
+    "eyeSaturation": 1.0,
+    "turnAtWake": true,
+    // the dominant direction with voice activity over this window ending at the wake reaction's start
+    "wakeDirectionWindow_s": 1.5,
+    "minDirectionConfidence": 500,
+    "headAngle_deg": 33.0,
+    "holdAnimName": "anim_eyepose_curious",
+    "promptAnimName": "anim_cortex_listening_prompt_01",
+    "promptAfter_s": 4.0,
+    "giveUpAnimName": "anim_wakeword_idk_01",
+    "giveUpAfter_s": 7.0,
+    "giveUpWait_s": 4.0,
+    // speech: a sustained run of at least minSpeech_s of voice activity within speechWindow_s, heard after the
+    // look gesture plus settleAfterLook_s (the VAD still reports the gesture's noise, the earcon tail and its
+    // hangover right after it). The prompt and give-up times still count from the end of the look gesture
+    "minSpeech_s": 0.6,
+    "speechWindow_s": 1.0,
+    "settleAfterLook_s": 1.0,
+    // the stock KnowledgeGraph "looking it up" face
+    "thinkingGetInAnimName": "anim_generic_look_up_01",
+    "thinkingLoopAnimName": "anim_generic_look_up_idle_01",
+    "thinkingDelay_s": 0.3
+  }
 }

@@ -24,6 +24,9 @@
 #include "engine/aiComponent/behaviorComponent/userIntents.h"
 #include "engine/audio/engineRobotAudioClient.h"
 #include "engine/components/localeComponent.h"
+#include "engine/components/sdkComponent.h"
+#include "clad/robotInterface/messageRobotToEngine.h"
+#include "clad/types/sdkAudioTypes.h"
 
 #include "coretech/common/engine/jsonTools.h"
 #include "coretech/common/engine/utils/timer.h"
@@ -31,6 +34,8 @@
 #include "util/global/globalDefinitions.h"
 #include "util/logging/logging.h"
 #include "clad/types/animationTrigger.h"
+
+#include <algorithm>
 
 #define PRINT_DEBUG(format, ...) \
   PRINT_CH_DEBUG("KnowledgeGraph", "BehaviorKnowledgeGraphQuestion", format, ##__VA_ARGS__)
@@ -48,14 +53,26 @@ namespace Anki
       const char *kKey_Duration = "streamingTimeout";
       const char *kKey_ReadyStringID = "readyStringID";
       const char *kKey_EarConEnd = "earConAudioEventEnd";
+      const char *kKey_ExternalVoiceMargin = "externalVoiceMargin_s";
+      const char *kKey_ExternalVoiceFirstAudio = "externalVoiceFirstAudio_s";
+      const char *kKey_ExternalVoiceMax = "externalVoiceMax_s";
 
       const double kDefaultDuration = 10.0;
       const char *kDefaultReadyStringID = "BehaviorKnowledgeGraphQuestion.Ready";
+
+      // external voice: vic-anim starts playing after 0.2s of audio and the cortex keeps a bounded lead, so a
+      // few seconds past the expected end (or the last chunk) means the end report was lost
+      const double kDefaultExternalVoiceMargin_s = 3.0;
+      const double kDefaultExternalVoiceFirstAudio_s = 5.0;
+      const double kDefaultExternalVoiceMax_s = 60.0;
     }
 
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     BehaviorKnowledgeGraphQuestion::InstanceConfig::InstanceConfig() : streamingDuration(kDefaultDuration),
-                                                                       earConEnd(AudioMetaData::GameEvent::GenericEvent::Invalid)
+                                                                       earConEnd(AudioMetaData::GameEvent::GenericEvent::Invalid),
+                                                                       externalVoiceMargin_s(kDefaultExternalVoiceMargin_s),
+                                                                       externalVoiceFirstAudio_s(kDefaultExternalVoiceFirstAudio_s),
+                                                                       externalVoiceMax_s(kDefaultExternalVoiceMax_s)
     {
     }
 
@@ -63,7 +80,13 @@ namespace Anki
     BehaviorKnowledgeGraphQuestion::DynamicVariables::DynamicVariables() : state(EState::GettingIn),
                                                                            streamingBeginTime(0.0),
                                                                            ttsGenerationStatus(EGenerationStatus::None),
-                                                                           wasPickedUp(false)
+                                                                           wasPickedUp(false),
+                                                                           externalVoice(false),
+                                                                           externalVoiceDone(false),
+                                                                           externalAudioOwned(false),
+                                                                           externalVoiceStart_s(0.0),
+                                                                           lastChunk_s(0.0),
+                                                                           expectedDuration_ms(0)
     {
     }
 
@@ -80,10 +103,17 @@ namespace Anki
         _iVars.earConEnd = AudioMetaData::GameEvent::GenericEventFromString(earConString);
       }
 
+      JsonTools::GetValueOptional(config, kKey_ExternalVoiceMargin, _iVars.externalVoiceMargin_s);
+      JsonTools::GetValueOptional(config, kKey_ExternalVoiceFirstAudio, _iVars.externalVoiceFirstAudio_s);
+      JsonTools::GetValueOptional(config, kKey_ExternalVoiceMax, _iVars.externalVoiceMax_s);
+
       SubscribeToTags({{
           ExternalInterface::MessageEngineToGameTag::TouchButtonEvent,
           ExternalInterface::MessageEngineToGameTag::RobotFallingEvent, // do we need this?
       }});
+
+      // the external audio stream's progress (vic-anim SdkAudioComponent), for the external voice mode
+      SubscribeToTags({RobotInterface::RobotToEngineTag::audioStreamStatusEvent});
     }
 
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -92,6 +122,9 @@ namespace Anki
       expectedKeys.insert(kKey_Duration);
       expectedKeys.insert(kKey_ReadyStringID);
       expectedKeys.insert(kKey_EarConEnd);
+      expectedKeys.insert(kKey_ExternalVoiceMargin);
+      expectedKeys.insert(kKey_ExternalVoiceFirstAudio);
+      expectedKeys.insert(kKey_ExternalVoiceMax);
     }
 
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -131,6 +164,14 @@ namespace Anki
     {
       _dVars = DynamicVariables();
 
+      if (IsExternalVoiceAnswer())
+      {
+        // the cortex already thought (ReactToVoiceCommand's thinking face) and speaks the answer itself: straight
+        // to the talking face, no get-in, searching loop, earcon or robot TTS
+        TransitionToExternalVoice();
+        return;
+      }
+
       // Get ready text for current locale
       const auto &bei = GetBEI();
       const auto &robotInfo = bei.GetRobotInfo();
@@ -169,6 +210,14 @@ namespace Anki
     {
       // make sure we cancel the ready utterance if we bail during it playing
       _readyTTSWrapper.CancelUtterance();
+
+      // interrupted while the cortex's voice may still play: stop it, a voice without its face is confusing
+      if (_dVars.externalAudioOwned)
+      {
+        PRINT_INFO("Interrupted during the external voice, cancelling the audio stream");
+        GetBEI().GetRobotInfo().GetSDKComponent().CancelExternalAudio();
+        _dVars.externalAudioOwned = false;
+      }
     }
 
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -197,6 +246,12 @@ namespace Anki
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     void BehaviorKnowledgeGraphQuestion::BehaviorUpdate()
     {
+      if (IsActivated() && _dVars.externalVoice)
+      {
+        UpdateExternalVoice();
+        return;
+      }
+
       if (IsActivated())
       {
         UserIntentComponent &uic = GetBehaviorComp<UserIntentComponent>();
@@ -497,6 +552,24 @@ namespace Anki
     void BehaviorKnowledgeGraphQuestion::OnResponseInterrupted()
     {
       DEV_ASSERT(EState::Responding == _dVars.state, "Should only allow interruptions during response state");
+
+      if (_dVars.externalVoice)
+      {
+        if (_dVars.externalVoiceDone)
+        {
+          return;
+        }
+        PRINT_INFO("Interruption event received, cancelling the external voice");
+        _dVars.state = EState::Interrupted;
+        if (_dVars.externalAudioOwned)
+        {
+          GetBEI().GetRobotInfo().GetSDKComponent().CancelExternalAudio();
+          _dVars.externalAudioOwned = false;
+        }
+        FinishExternalVoice();
+        return;
+      }
+
       PRINT_INFO("Interruption event received, cancelling TTS");
 
       _dVars.state = EState::Interrupted;
@@ -512,10 +585,145 @@ namespace Anki
       using namespace AudioMetaData::GameEvent;
       BehaviorExternalInterface &bei = GetBEI();
 
-      if (GenericEvent::Invalid != _iVars.earConEnd)
+      if ((GenericEvent::Invalid != _iVars.earConEnd) && UserIntentComponent::PlaysVoiceRequestSuccessEarcon())
       {
         // Play earcon end audio
         bei.GetRobotAudioClient().PostEvent(_iVars.earConEnd, AudioMetaData::GameObjectType::Behavior);
+      }
+    }
+
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    bool BehaviorKnowledgeGraphQuestion::IsExternalVoiceAnswer() const
+    {
+      const UserIntentComponent &uic = GetBehaviorComp<UserIntentComponent>();
+      UserIntentPtr intentDataPtr = uic.GetUserIntentIfActive(USER_INTENT(knowledge_response_bypass));
+      return (intentDataPtr != nullptr) && intentDataPtr->intent.Get_knowledge_response_bypass().external_voice;
+    }
+
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    void BehaviorKnowledgeGraphQuestion::TransitionToExternalVoice()
+    {
+      ConsumeIntentGraphResponse();
+
+      const UserIntentComponent &uic = GetBehaviorComp<UserIntentComponent>();
+      UserIntentPtr intentDataPtr = uic.GetUserIntentIfActive(USER_INTENT(knowledge_response_bypass));
+      _dVars.expectedDuration_ms = intentDataPtr->intent.Get_knowledge_response_bypass().expected_duration_ms;
+
+      _dVars.state = EState::Responding;
+      _dVars.externalVoice = true;
+      _dVars.externalAudioOwned = true;
+      _dVars.externalVoiceStart_s = BaseStationTimer::getInstance()->GetCurrentTimeInSecondsDouble();
+      _dVars.wasPickedUp = GetBEI().GetRobotInfo().IsPickedUp();
+      PRINT_INFO("External voice answer, expected %u ms", _dVars.expectedDuration_ms);
+
+      DelegateIfInControl(new TriggerLiftSafeAnimationAction(AnimationTrigger::TextToSpeechGetIn),
+                          &BehaviorKnowledgeGraphQuestion::TransitionToExternalVoiceLoop);
+    }
+
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    void BehaviorKnowledgeGraphQuestion::TransitionToExternalVoiceLoop()
+    {
+      // the TTS talking clips: face keyframes only, no sound. Looped until the stream ends
+      DelegateIfInControl(new ReselectingLoopAnimationAction(AnimationTrigger::TextToSpeechGetLoop));
+    }
+
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    double BehaviorKnowledgeGraphQuestion::GetExternalVoiceDeadline() const
+    {
+      const double start = _dVars.externalVoiceStart_s;
+      double deadline = (_dVars.expectedDuration_ms > 0)
+                          ? start + (_dVars.expectedDuration_ms / 1000.0) + _iVars.externalVoiceMargin_s
+                          : start + _iVars.externalVoiceFirstAudio_s;
+      if (_dVars.lastChunk_s > 0.0)
+      {
+        // still streaming: the audio plays at least until the last chunk
+        deadline = std::max(deadline, _dVars.lastChunk_s + _iVars.externalVoiceMargin_s);
+      }
+      return std::min(deadline, start + _iVars.externalVoiceMax_s);
+    }
+
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    void BehaviorKnowledgeGraphQuestion::UpdateExternalVoice()
+    {
+      if (_dVars.externalVoiceDone)
+      {
+        return;
+      }
+
+      // same pick-up interruption as the robot's own TTS
+      const bool isPickedUp = GetBEI().GetRobotInfo().IsPickedUp();
+      if (!_dVars.wasPickedUp && isPickedUp)
+      {
+        _dVars.wasPickedUp = isPickedUp;
+        OnResponseInterrupted();
+        return;
+      }
+      _dVars.wasPickedUp = isPickedUp;
+
+      if (!_dVars.externalAudioOwned)
+      {
+        // the stream ended (completed, cancelled or failed)
+        FinishExternalVoice();
+        return;
+      }
+
+      const double now = BaseStationTimer::getInstance()->GetCurrentTimeInSecondsDouble();
+      if (now >= GetExternalVoiceDeadline())
+      {
+        // the end report never came: stop the face but leave whatever still plays alone
+        PRINT_NAMED_WARNING("BehaviorKnowledgeGraphQuestion.ExternalVoiceTimeout",
+                            "no end of the external audio stream after %.1fs", now - _dVars.externalVoiceStart_s);
+        _dVars.externalAudioOwned = false;
+        FinishExternalVoice();
+      }
+    }
+
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    void BehaviorKnowledgeGraphQuestion::FinishExternalVoice()
+    {
+      if (_dVars.externalVoiceDone)
+      {
+        return;
+      }
+      _dVars.externalVoiceDone = true;
+      CancelDelegates(false);
+
+      CompoundActionSequential *getOut = new CompoundActionSequential();
+      getOut->AddAction(new TriggerLiftSafeAnimationAction(AnimationTrigger::TextToSpeechGetOut), true);
+      if (EState::Interrupted != _dVars.state)
+      {
+        // the same "done" reaction as after the robot's own TTS
+        getOut->AddAction(new TriggerLiftSafeAnimationAction(AnimationTrigger::KnowledgeGraphSuccessReaction), true);
+      }
+      DelegateIfInControl(getOut);
+    }
+
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    void BehaviorKnowledgeGraphQuestion::HandleWhileActivated(const RobotToEngineEvent &event)
+    {
+      if (!_dVars.externalVoice || !_dVars.externalAudioOwned ||
+          (event.GetData().GetTag() != RobotInterface::RobotToEngineTag::audioStreamStatusEvent))
+      {
+        return;
+      }
+
+      const auto &status = event.GetData().Get_audioStreamStatusEvent();
+      switch (status.streamResultID)
+      {
+      case SDKAudioStreamingState::ChunkAdded:
+        _dVars.lastChunk_s = BaseStationTimer::getInstance()->GetCurrentTimeInSecondsDouble();
+        break;
+      case SDKAudioStreamingState::Completed:
+      case SDKAudioStreamingState::Cancelled:
+      case SDKAudioStreamingState::PrepareFailed:
+      case SDKAudioStreamingState::PostFailed:
+      case SDKAudioStreamingState::AddAudioFailed:
+      case SDKAudioStreamingState::BufferOverflow:
+        PRINT_INFO("External voice stream ended: %s", EnumToString(status.streamResultID));
+        _dVars.externalAudioOwned = false;
+        break;
+      default:
+        break;
       }
     }
 
